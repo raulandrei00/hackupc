@@ -62,6 +62,7 @@ class DestinationScore:
     total_emissions: float
     flight_plans: List[TravelerFlightPlan] = field(default_factory=list)
     score: float = float('inf')  # Lower is better
+    score_breakdowns: Dict[str, Dict[str, float]] = field(default_factory=dict)
 
 
 # ----- API Integration -----
@@ -435,7 +436,9 @@ def calculate_scores(
     cost_weight: float,
     emissions_weight: float,
     preference_weight: float,
-    general_preferences: List[Dict] = None
+    general_preferences: List[Dict] = None,
+    user_id: str = None,
+    external_preference_store: Dict = None
 ) -> List[DestinationScore]:
     """
     Calculate scores for destinations based on cost, emissions, traveler preferences, and general preferences.
@@ -446,6 +449,8 @@ def calculate_scores(
         emissions_weight: Weight for emissions in scoring (0-1)
         preference_weight: Weight for traveler preferences in scoring (0-1)
         general_preferences: List of general preference objects
+        user_id: Identifier for the user when using external preference store
+        external_preference_store: External preference store for individual and group preferences
         
     Returns:
         Updated list of DestinationScore objects with scores
@@ -483,14 +488,42 @@ def calculate_scores(
     logger.info(f"General airline preferences: {general_airline_preferences}")
     logger.info(f"General time preferences: {general_time_preferences}")
     
-    # Set weights for general preferences
-    general_preference_weight = 0.4  # High weight for general preferences
+    # Check for external preference store
+    has_external_prefs = external_preference_store is not None and user_id is not None
+    
+    # Get individual preferences from external store if available
+    individual_prefs = {}
+    group_prefs = {}
+    
+    if has_external_prefs:
+        # Get individual preferences for this user
+        if user_id in external_preference_store.get('individual', {}):
+            individual_prefs = external_preference_store['individual'][user_id]
+        
+        # Get group preferences
+        group_prefs = external_preference_store.get('group', {})
+            
+    # Set general preference weight to be twice the preference weight
+    general_preference_weight = preference_weight * 2
+    
+    # Add weight for individual and group preferences if external store is used
+    individual_preference_weight = preference_weight * 1.5
+    group_preference_weight = preference_weight * 1.0
     
     # Adjust weights to ensure they sum to 1
-    total_weight = cost_weight + emissions_weight + preference_weight
-    cost_weight = cost_weight / total_weight * 0.6  # Reduce to 60% of original weight
-    emissions_weight = emissions_weight / total_weight * 0.6  # Reduce to 60% of original weight 
-    preference_weight = preference_weight / total_weight * 0.6  # Reduce to 60% of original weight
+    total_weight = cost_weight + emissions_weight + preference_weight + general_preference_weight
+    
+    if has_external_prefs:
+        total_weight += individual_preference_weight + group_preference_weight
+    
+    cost_weight = cost_weight / total_weight
+    emissions_weight = emissions_weight / total_weight
+    preference_weight = preference_weight / total_weight
+    general_preference_weight = general_preference_weight / total_weight
+    
+    if has_external_prefs:
+        individual_preference_weight = individual_preference_weight / total_weight
+        group_preference_weight = group_preference_weight / total_weight
     
     logger.info(f"Adjusted weights - Cost: {cost_weight:.2f}, Emissions: {emissions_weight:.2f}, " +
                f"Preference: {preference_weight:.2f}, General Preference: {general_preference_weight:.2f}")
@@ -502,8 +535,25 @@ def calculate_scores(
     max_emissions = max(d.total_emissions for d in destinations)
     min_emissions = min(d.total_emissions for d in destinations)
     
+    # Destinations to exclude due to negative ratings
+    destinations_to_exclude = set()
+    
+    # Store detailed score breakdowns
+    score_breakdowns = {}
+    
     # Calculate normalized scores
     for destination in destinations:
+        dest_code = destination.destination_code
+        
+        # Check if this destination should be excluded due to strongly negative preference
+        if has_external_prefs:
+            # Check individual preference for this destination - use string key
+            dest_pref_key = f"destination:{dest_code}"
+            if dest_pref_key in individual_prefs and individual_prefs[dest_pref_key] < 0:
+                # Exclude destinations with negative ratings
+                destinations_to_exclude.add(dest_code)
+                continue
+        
         # Normalize cost (0-1 scale, lower is better)
         if max_cost > min_cost:
             norm_cost = (destination.total_cost - min_cost) / (max_cost - min_cost)
@@ -547,22 +597,81 @@ def calculate_scores(
             general_time_preferences
         )
         
+        # Initialize additional preference scores
+        individual_pref_score = 0.5  # Neutral by default
+        group_pref_score = 0.5       # Neutral by default
+        
+        # Add individual and group preference scores if available
+        if has_external_prefs:
+            # Get individual preference for this destination - use string key
+            dest_pref_key = f"destination:{dest_code}"
+            if dest_pref_key in individual_prefs:
+                # Convert from -5 to +5 scale to 0-1 scale (lower is better)
+                rating = individual_prefs[dest_pref_key]
+                if rating > 0:
+                    # Positive ratings: higher rating = lower score = better
+                    individual_pref_score = 1 - (rating / 5)
+                else:
+                    # Negative ratings: lower rating = higher score = worse
+                    individual_pref_score = 0.5 + abs(rating) / 10  # Max 1.0 for -5 rating
+            
+            # Get group preference for this destination - use string key
+            if dest_pref_key in group_prefs:
+                # Convert from -5 to +5 scale to 0-1 scale (lower is better)
+                rating = group_prefs[dest_pref_key]
+                if rating > 0:
+                    # Positive ratings: higher rating = lower score = better
+                    group_pref_score = 1 - (rating / 5)
+                else:
+                    # Negative ratings: lower rating = higher score = worse
+                    group_pref_score = 0.5 + abs(rating) / 10  # Max 1.0 for -5 rating
+        
         # Calculate weighted score (lower is better)
-        weighted_score = (
-            (cost_weight * norm_cost) + 
-            (emissions_weight * norm_emissions) + 
-            (preference_weight * norm_preference) +
+        weighted_score_components = [
+            (cost_weight * norm_cost),
+            (emissions_weight * norm_emissions),
+            (preference_weight * norm_preference),
             (general_preference_weight * general_pref_score)
-        )
+        ]
+        
+        if has_external_prefs:
+            weighted_score_components.extend([
+                (individual_preference_weight * individual_pref_score),
+                (group_preference_weight * group_pref_score)
+            ])
+        
+        weighted_score = sum(weighted_score_components)
         
         # Ensure score is between 0 and 1
         destination.score = max(0, min(1, weighted_score))
+        
+        # Convert 0-1 scale (where lower is better) to 0-100 scale (where higher is better)
+        # for more intuitive display in the UI
+        ui_base_score = (1 - ((norm_cost * 0.6) + (norm_emissions * 0.4))) * 100
+        ui_group_pref_score = ((1 - group_pref_score) * 10) - 5 if has_external_prefs else 0
+        ui_individual_pref_score = ((1 - individual_pref_score) * 10) - 5 if has_external_prefs else 0
+        ui_combined_score = (1 - destination.score) * 100
+        
+        # Store score breakdowns for UI display
+        score_breakdowns[dest_code] = {
+            "base_score": ui_base_score,
+            "group_preference": ui_group_pref_score,
+            "individual_preference": ui_individual_pref_score,
+            "combined_score": ui_combined_score
+        }
         
         logger.info(f"Destination {destination.destination_code} scores - Cost: {norm_cost:.2f}, " +
                    f"Emissions: {norm_emissions:.2f}, Preference: {norm_preference:.2f}, " +
                    f"General Pref: {general_pref_score:.2f}, Final Score: {destination.score:.2f}")
     
-    return destinations
+    # Filter out destinations with negative preferences
+    filtered_destinations = [d for d in destinations if d.destination_code not in destinations_to_exclude]
+    
+    # Add score breakdowns to the first destination (will be retrieved by the UI)
+    if filtered_destinations and score_breakdowns:
+        filtered_destinations[0].score_breakdowns = score_breakdowns
+    
+    return filtered_destinations
 
 
 def calculate_general_preference_score(

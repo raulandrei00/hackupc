@@ -230,6 +230,11 @@ function initializeChat() {
     // Store chat history
     let chatHistory = [];
     
+    // Initialize the chat UI with welcome message
+    if (chatMessages.children.length === 0) {
+        addChatMessage("Hello! I'm your travel planning assistant. I can help with destination ideas, travel tips, and more. How can I assist you today?", 'bot');
+    }
+    
     // Handle sending messages
     sendChatBtn.addEventListener('click', sendChatMessage);
     
@@ -282,15 +287,27 @@ function initializeChat() {
                 // Add assistant's message to chat
                 addChatMessage(data.message, 'bot');
                 
-                // Store assistant response in chat history
-                chatHistory.push({
-                    role: 'assistant',
-                    content: data.message
-                });
+                // Update chat history from server
+                if (data.chat_history) {
+                    chatHistory = data.chat_history;
+                    console.log(`Updated chat history from server: ${chatHistory.length} messages`);
+                } else {
+                    // Fallback: store assistant response in local chat history
+                    chatHistory.push({
+                        role: 'assistant',
+                        content: data.message
+                    });
+                }
                 
-                // Limit chat history to last 10 messages to avoid exceeding API limits
-                if (chatHistory.length > 20) {
-                    chatHistory = chatHistory.slice(chatHistory.length - 20);
+                // Process preference updates from the API
+                if (data.preference_updates && data.preference_updates.modifications && 
+                    data.preference_updates.modifications.length > 0) {
+                    
+                    processChatPreferenceUpdates(data.preference_updates);
+                    
+                    // Optional: Notify the user about preference updates
+                    const updateMsg = `Automatically updated ${data.preference_updates.modifications.length} preferences based on your message.`;
+                    addChatMessage(updateMsg, 'bot', 'system-message');
                 }
                 
                 // Check for destination suggestions in the response
@@ -306,6 +323,11 @@ function initializeChat() {
                     displayDestinationsToAvoid(data.destinations_to_avoid);
                 }
                 
+                // Display score breakdowns if available
+                if (data.score_breakdowns && Object.keys(data.score_breakdowns).length > 0) {
+                    displayScoreBreakdowns(data.score_breakdowns);
+                }
+                
                 // Process general preference suggestions if available
                 if (data.general_preference_suggestions && data.general_preference_suggestions.length > 0) {
                     // Automatically integrate general preference suggestions
@@ -319,7 +341,7 @@ function initializeChat() {
                         
                         // Show notification that preferences were added
                         const notificationMsg = `Automatically added ${data.general_preference_suggestions.length} preferences based on your conversation.`;
-                        addChatMessage(notificationMsg, 'bot');
+                        addChatMessage(notificationMsg, 'bot', 'system-message');
                     } else {
                         // Just display suggestions for manual addition
                         displayGeneralPreferenceSuggestions(data.general_preference_suggestions);
@@ -333,7 +355,7 @@ function initializeChat() {
                     
                     // Show notification
                     const notificationMsg = `Updated ${data.preference_modifications.length} preferences based on your feedback.`;
-                    addChatMessage(notificationMsg, 'bot');
+                    addChatMessage(notificationMsg, 'bot', 'system-message');
                 }
                 
                 // Refresh destination results to incorporate any new preferences
@@ -381,9 +403,9 @@ function initializeChat() {
     }
     
     // Function to add a message to the chat
-    function addChatMessage(text, sender) {
+    function addChatMessage(text, sender, customClass = '') {
         const messageDiv = document.createElement('div');
-        messageDiv.className = `message ${sender}-message`;
+        messageDiv.className = `message ${sender}-message ${customClass}`;
         messageDiv.textContent = text;
         chatMessages.appendChild(messageDiv);
         chatMessages.scrollTop = chatMessages.scrollHeight;
@@ -1302,6 +1324,21 @@ function displayResults(destinations) {
         return;
     }
     
+    // Add a summary line about preference-based filtering
+    const summaryDiv = document.createElement('div');
+    summaryDiv.className = 'alert alert-primary mb-4';
+    
+    // Get the top destination
+    const topDestination = destinations[0];
+    const topDestCode = topDestination.destination || topDestination.destination_code || "Unknown";
+    
+    summaryDiv.innerHTML = `
+        <h5 class="alert-heading">Destination Ranking Summary</h5>
+        <p>${topDestCode} is your top destination choice with a combined score of ${topDestination.score.toFixed(2)}.</p>
+        <p class="mb-0"><small>Results filtered based on individual and group preferences. Destinations with negative ratings are excluded.</small></p>
+    `;
+    destinationResults.appendChild(summaryDiv);
+    
     const template = document.getElementById('destinationResultTemplate');
     const flightPlanTemplate = document.getElementById('flightPlanTemplate');
     
@@ -1319,6 +1356,30 @@ function displayResults(destinations) {
         destNode.querySelector('.total-cost').textContent = formatCurrency(destination.total_cost);
         destNode.querySelector('.avg-cost').textContent = formatCurrency(destination.average_cost);
         destNode.querySelector('.emissions').textContent = `${destination.total_emissions.toFixed(1)} kg`;
+        
+        // Add score display
+        const scoreDiv = document.createElement('div');
+        scoreDiv.className = 'col-md-12 mb-3';
+        scoreDiv.innerHTML = `
+            <div class="card text-center">
+                <div class="card-body">
+                    <h5 class="card-title">Combined Score</h5>
+                    <p class="card-text fs-4 fw-bold">${(destination.score * 100).toFixed(1)}/100</p>
+                    <div class="progress">
+                        <div class="progress-bar" role="progressbar" 
+                            style="width: ${(destination.score * 100).toFixed(1)}%;" 
+                            aria-valuenow="${destination.score * 100}" 
+                            aria-valuemin="0" 
+                            aria-valuemax="100">
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        // Add the score div after the existing details
+        const detailsDiv = destNode.querySelector('.destination-details');
+        safeInsertAfter(scoreDiv, detailsDiv);
         
         // Add flight plans
         const flightPlansContainer = destNode.querySelector('.flight-plans');
@@ -1857,4 +1918,204 @@ function updateGeneralPreference(preferenceItem, newValue, sentiment) {
         
         valueInput.parentNode.appendChild(indicator);
     }
+}
+
+// Function to process preference updates from the chat API
+function processChatPreferenceUpdates(preferenceUpdates) {
+    console.log("Processing preference updates:", preferenceUpdates);
+    
+    if (!preferenceUpdates || !preferenceUpdates.modifications) {
+        return;
+    }
+    
+    // Get existing preference elements
+    const existingPreferences = {};
+    
+    // Track which preferences were updated
+    const updatedPreferences = [];
+    
+    // Process each modification
+    for (const mod of preferenceUpdates.modifications) {
+        const category = mod.category;
+        const key = mod.key;
+        const newRating = mod.new_rating;
+        const original = mod.original;
+        
+        console.log(`Processing ${category} preference for ${key} (${original}): ${newRating}`);
+        
+        switch (category) {
+            case "destination":
+                // Handle destination preferences
+                const existingDestPref = findExistingDestinationPreference(key);
+                if (existingDestPref) {
+                    // Update existing preference
+                    updateDestinationPreference(existingDestPref, newRating);
+                    updatedPreferences.push({type: "destination", element: existingDestPref});
+                } else {
+                    // Add new preference
+                    addDestinationToGeneralPreferences(key, newRating);
+                    // Find the newly added preference
+                    setTimeout(() => {
+                        const newPref = findExistingDestinationPreference(key);
+                        if (newPref) {
+                            updatedPreferences.push({type: "destination", element: newPref});
+                        }
+                    }, 100);
+                }
+                break;
+                
+            case "airline":
+                // Handle airline preferences
+                addToGeneralPreferences("airline", original);
+                break;
+                
+            case "hotel":
+                // Handle hotel preferences
+                addToGeneralPreferences("hotel_chain", original);
+                break;
+                
+            case "activity":
+                // Handle activity preferences
+                addToGeneralPreferences("activity", original);
+                break;
+                
+            case "budget":
+                // Handle budget preferences
+                addToGeneralPreferences("budget", `${original}`);
+                break;
+                
+            case "pace":
+                // Handle pace preferences
+                addToGeneralPreferences("pace", original);
+                break;
+                
+            default:
+                // Handle any other preferences as general
+                addToGeneralPreferences("other", original);
+                break;
+        }
+    }
+    
+    // Highlight updated preferences
+    setTimeout(() => {
+        for (const pref of updatedPreferences) {
+            pref.element.classList.add("preference-updated");
+            setTimeout(() => {
+                pref.element.classList.remove("preference-updated");
+            }, 5000);
+        }
+    }, 200);
+}
+
+// Display score breakdowns from the API
+function displayScoreBreakdowns(breakdowns) {
+    console.log("Score breakdowns:", breakdowns);
+    
+    if (!breakdowns || Object.keys(breakdowns).length === 0) {
+        return;
+    }
+    
+    // Create or get the score breakdowns container
+    let breakdownsDiv = document.getElementById('scoreBreakdowns');
+    if (!breakdownsDiv) {
+        breakdownsDiv = document.createElement('div');
+        breakdownsDiv.id = 'scoreBreakdowns';
+        breakdownsDiv.className = 'mt-4 p-3 border rounded bg-light';
+        
+        // Add to the page - try to insert after chat messages
+        const chatMessages = document.getElementById('chatMessages');
+        if (chatMessages) {
+            if (!safeInsertAfter(breakdownsDiv, chatMessages)) {
+                // Fallback: Insert in destinations area
+                const resultsContainer = document.getElementById('resultsContainer');
+                if (resultsContainer) {
+                    resultsContainer.appendChild(breakdownsDiv);
+                }
+            }
+        } else {
+            // Fallback
+            const container = document.querySelector('.container .row');
+            if (container) {
+                container.appendChild(breakdownsDiv);
+            }
+        }
+    }
+    
+    // Clear existing content
+    breakdownsDiv.innerHTML = '';
+    
+    // Add header
+    const header = document.createElement('h4');
+    header.textContent = 'Destination Score Breakdowns';
+    breakdownsDiv.appendChild(header);
+    
+    // Add description
+    const description = document.createElement('p');
+    description.textContent = 'These scores show how each destination ranks based on multiple factors:';
+    description.className = 'text-muted mb-3';
+    breakdownsDiv.appendChild(description);
+    
+    // Create a container for the breakdowns
+    const breakdownsContainer = document.createElement('div');
+    breakdownsContainer.className = 'row';
+    breakdownsDiv.appendChild(breakdownsContainer);
+    
+    // Add each destination breakdown
+    for (const [airport, scores] of Object.entries(breakdowns)) {
+        const card = document.createElement('div');
+        card.className = 'col-md-6 mb-3';
+        
+        // Create the card content
+        card.innerHTML = `
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">${airport}</h5>
+                </div>
+                <div class="card-body">
+                    <div class="d-flex justify-content-between mb-2">
+                        <span>Base Score:</span>
+                        <span class="fw-bold">${scores.base_score.toFixed(1)}</span>
+                    </div>
+                    <div class="d-flex justify-content-between mb-2">
+                        <span>Group Preference:</span>
+                        <span class="fw-bold ${scores.group_preference >= 0 ? 'text-success' : 'text-danger'}">
+                            ${scores.group_preference >= 0 ? '+' : ''}${scores.group_preference.toFixed(1)}
+                        </span>
+                    </div>
+                    <div class="d-flex justify-content-between mb-2">
+                        <span>Your Preference:</span>
+                        <span class="fw-bold ${scores.individual_preference >= 0 ? 'text-success' : 'text-danger'}">
+                            ${scores.individual_preference >= 0 ? '+' : ''}${scores.individual_preference.toFixed(1)}
+                        </span>
+                    </div>
+                    <div class="d-flex justify-content-between mt-3 pt-2 border-top">
+                        <span>Combined Score:</span>
+                        <span class="fw-bold fs-5">${scores.combined_score.toFixed(1)}</span>
+                    </div>
+                </div>
+                <div class="card-footer">
+                    <div class="progress">
+                        <div class="progress-bar" role="progressbar" 
+                            style="width: ${Math.min(100, scores.combined_score)}%;" 
+                            aria-valuenow="${scores.combined_score}" 
+                            aria-valuemin="0" 
+                            aria-valuemax="100">
+                            ${scores.combined_score.toFixed(1)}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        breakdownsContainer.appendChild(card);
+    }
+    
+    // Add dismiss button
+    const dismissButton = document.createElement('button');
+    dismissButton.className = 'btn btn-sm btn-outline-secondary';
+    dismissButton.textContent = 'Dismiss Score Breakdowns';
+    dismissButton.addEventListener('click', function() {
+        breakdownsDiv.remove();
+    });
+    breakdownsDiv.appendChild(dismissButton);
 } 

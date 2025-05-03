@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, session
 import os
 import json
 from datetime import datetime
@@ -6,6 +6,8 @@ from travel_planner import Traveler, find_optimal_destinations, print_destinatio
 import google.generativeai as genai
 from dotenv import load_dotenv
 import re
+import uuid
+from typing import Dict, List, Tuple, Optional, Any, Union
 
 # Try to load environment variables
 try:
@@ -22,6 +24,263 @@ if not GOOGLE_API_KEY:
 genai.configure(api_key=GOOGLE_API_KEY)
 
 app = Flask(__name__)
+app.secret_key = os.urandom(24)  # Generate a random secret key for sessions
+
+# Dictionary to store chat histories by session ID
+chat_histories = {}
+
+# Add preference stores to keep track of preferences
+# These would ideally be in a database, but we'll use in-memory for now
+individual_preferences = {}  # user_id -> {(category, key): rating}
+group_preferences = {}       # {(category, key): average_rating}
+
+# Reference data for categorization
+AIRLINES = {
+    "delta": "DL",
+    "american": "AA", 
+    "united": "UA",
+    "southwest": "WN",
+    "jetblue": "B6",
+    "alaska": "AS",
+    "spirit": "NK",
+    "frontier": "F9",
+    "lufthansa": "LH",
+    "british airways": "BA",
+    "air france": "AF",
+    "klm": "KL",
+    "emirates": "EK",
+    "singapore airlines": "SQ"
+}
+
+HOTEL_CHAINS = [
+    "marriott", "hilton", "hyatt", "ihg", "choice", "wyndham", 
+    "best western", "accor", "radisson", "four seasons", "ritz-carlton"
+]
+
+ACTIVITIES = [
+    "beach", "museum", "hiking", "shopping", "sightseeing", "food", 
+    "nightlife", "adventure", "relaxation", "culture", "history", 
+    "nature", "theme park", "water sports", "skiing"
+]
+
+PACE_KEYWORDS = [
+    "slow", "relaxed", "fast", "busy", "packed", "leisurely", 
+    "hectic", "rushed", "chill", "intense"
+]
+
+def resolve_preference(token: str, context: str = "") -> List[Dict[str, Any]]:
+    """
+    Identify the category and key for a preference token.
+    
+    Args:
+        token: The text token that contains the preference
+        context: Additional context to help categorize
+        
+    Returns:
+        List of dicts with category, key pairs
+    """
+    token = token.strip().lower()
+    results = []
+    
+    # Check if it's an airport/destination (3-letter code)
+    airport_match = re.search(r'\b([A-Z]{3})\b', token, re.IGNORECASE)
+    if airport_match:
+        results.append({
+            "category": "destination",
+            "key": airport_match.group(1).upper(),
+            "original": token
+        })
+        return results
+    
+    # Check for airlines
+    for airline, code in AIRLINES.items():
+        if airline.lower() in token.lower():
+            results.append({
+                "category": "airline",
+                "key": code,
+                "original": airline
+            })
+            return results
+    
+    # Check for hotel chains
+    for hotel in HOTEL_CHAINS:
+        if hotel.lower() in token.lower():
+            results.append({
+                "category": "hotel",
+                "key": hotel.title(),
+                "original": token
+            })
+            return results
+    
+    # Check for activities
+    for activity in ACTIVITIES:
+        if activity.lower() in token.lower():
+            results.append({
+                "category": "activity",
+                "key": activity.title(),
+                "original": token
+            })
+            return results
+    
+    # Check for budget mentions
+    budget_match = re.search(r'(?:under|around|at least|max|maximum)\s*\$?(\d+)(?:/night)?', token, re.IGNORECASE)
+    if budget_match:
+        amount = int(budget_match.group(1))
+        results.append({
+            "category": "budget",
+            "key": f"${amount}",
+            "original": token,
+            "value": amount
+        })
+        return results
+    
+    # Check for pace preferences
+    for pace in PACE_KEYWORDS:
+        if pace.lower() in token.lower():
+            results.append({
+                "category": "pace",
+                "key": pace.title(),
+                "original": token
+            })
+            return results
+    
+    # If no specific category detected, use a general preference
+    if token:
+        results.append({
+            "category": "general",
+            "key": token.title(),
+            "original": token
+        })
+    
+    return results
+
+def detect_preferences(message: str) -> List[Dict[str, Any]]:
+    """
+    Detect preferences in a user message.
+    
+    Args:
+        message: The user message to analyze
+        
+    Returns:
+        List of preference modifications as dictionaries
+    """
+    modifications = []
+    
+    # Negative patterns (avoid, dislike)
+    negative_patterns = [
+        r"don'?t (?:want to go to|like|use|stay at|ride|enjoy) (.+)",
+        r"avoid (.+)",
+        r"hate (.+)",
+        r"not interested in (.+)",
+        r"dislike (.+)",
+        r"no (.+)"
+    ]
+    
+    # Positive patterns (like, prefer)
+    positive_patterns = [
+        r"(?:really |definitely |absolutely )?(?:love|like|enjoy|prefer) (.+)",
+        r"interested in (.+)",
+        r"want to (?:go to|visit|see|experience) (.+)",
+        r"(?:plan|hope) to (?:visit|see|go to) (.+)"
+    ]
+    
+    # Check negative patterns
+    for pattern in negative_patterns:
+        for match in re.finditer(pattern, message, re.IGNORECASE):
+            token = match.group(1).strip()
+            prefs = resolve_preference(token, message)
+            for pref in prefs:
+                modifications.append({
+                    "category": pref["category"],
+                    "key": pref["key"],
+                    "rating_delta": -3,  # Negative sentiment
+                    "original": pref["original"]
+                })
+    
+    # Check positive patterns
+    for pattern in positive_patterns:
+        for match in re.finditer(pattern, message, re.IGNORECASE):
+            token = match.group(1).strip()
+            prefs = resolve_preference(token, message)
+            for pref in prefs:
+                modifications.append({
+                    "category": pref["category"],
+                    "key": pref["key"],
+                    "rating_delta": 3,  # Positive sentiment
+                    "original": pref["original"]
+                })
+    
+    # Look for airport codes with explicit sentiment
+    airport_patterns = [
+        (r"I (?:do not|don'?t) (?:like|want|prefer) ([A-Z]{3})", -3),  # Negative
+        (r"I (?:like|love|prefer|want) ([A-Z]{3})", 3)                 # Positive
+    ]
+    
+    for pattern, rating in airport_patterns:
+        for match in re.finditer(pattern, message):
+            airport = match.group(1).upper()
+            modifications.append({
+                "category": "destination",
+                "key": airport,
+                "rating_delta": rating,
+                "original": airport
+            })
+    
+    return modifications
+
+def update_preferences(user_id: str, modifications: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Update individual and group preferences based on modifications.
+    
+    Args:
+        user_id: Identifier for the user
+        modifications: List of preference modifications
+        
+    Returns:
+        Dictionary with updated preferences
+    """
+    if user_id not in individual_preferences:
+        individual_preferences[user_id] = {}
+    
+    applied_modifications = []
+    
+    for mod in modifications:
+        category = mod["category"]
+        key = mod["key"]
+        delta = mod["rating_delta"]
+        
+        # Update individual preference - use string key instead of tuple
+        pref_key = f"{category}:{key}"
+        current = individual_preferences[user_id].get(pref_key, 0)
+        new_rating = max(-5, min(5, current + delta))  # Clamp to [-5, +5]
+        individual_preferences[user_id][pref_key] = new_rating
+        
+        # Record the applied modification
+        applied_modifications.append({
+            "category": category,
+            "key": key,
+            "previous_rating": current,
+            "new_rating": new_rating,
+            "original": mod.get("original", key)
+        })
+        
+        # Recalculate group preference for this key
+        total = 0
+        count = 0
+        for user_prefs in individual_preferences.values():
+            if pref_key in user_prefs:
+                total += user_prefs[pref_key]
+                count += 1
+        
+        if count > 0:
+            group_preferences[pref_key] = total / count
+    
+    return {
+        "user_id": user_id,
+        "modifications": applied_modifications,
+        "individual_preferences": individual_preferences[user_id],
+        "group_preferences": group_preferences
+    }
 
 @app.route('/')
 def index():
@@ -40,7 +299,41 @@ def chat_api():
         data = request.json
         message = data.get('message', '')
         preferences = data.get('preferences', {})
-        chat_history = data.get('chat_history', [])
+        client_chat_history = data.get('chat_history', [])
+        
+        # Get or create a session ID
+        session_id = request.cookies.get('session_id')
+        if not session_id:
+            session_id = str(uuid.uuid4())
+        
+        # Initialize chat history for this session if it doesn't exist
+        if session_id not in chat_histories:
+            chat_histories[session_id] = []
+        
+        # Merge client-side history with server-side history if needed
+        server_chat_history = chat_histories[session_id]
+        
+        # If client has history but server doesn't, use client history
+        if not server_chat_history and client_chat_history:
+            chat_histories[session_id] = client_chat_history
+            server_chat_history = client_chat_history
+        
+        # Add the new user message to the history
+        user_message = {
+            'role': 'user',
+            'content': message,
+            'timestamp': datetime.now().isoformat()
+        }
+        server_chat_history.append(user_message)
+        
+        # Detect preferences in the user message
+        preference_modifications = detect_preferences(message)
+        
+        # Update preferences if any were detected
+        preference_updates = None
+        if preference_modifications:
+            preference_updates = update_preferences(session_id, preference_modifications)
+            print(f"Updated preferences for user {session_id}: {len(preference_modifications)} modifications")
         
         # Extract detailed preferences
         travel_date = preferences.get('travelDate', 'Not specified')
@@ -81,15 +374,23 @@ def chat_api():
                 else:
                     general_pref_info += f"- {pref_type}: {pref_value}\n"
         
+        # Add detected preferences to general_pref_info
+        if preference_updates and preference_updates["modifications"]:
+            general_pref_info += "\nNEWLY DETECTED PREFERENCES:\n"
+            for mod in preference_updates["modifications"]:
+                sentiment = "Positive" if mod["new_rating"] > 0 else "Negative"
+                general_pref_info += f"- {mod['category'].title()}: {mod['original']} " + \
+                                    f"(Rating: {mod['new_rating']}/5, {sentiment})\n"
+        
         # Format destination options
         destination_info = ", ".join(destinations) if destinations else "Not specified"
         
         # Format chat history for context (excluding the current message)
         chat_context = ""
-        if len(chat_history) > 1:  # If there's previous conversation
+        if len(server_chat_history) > 1:  # If there's previous conversation
             chat_context = "PREVIOUS CONVERSATION:\n"
             # Include up to the last 5 exchanges (10 messages) to avoid making prompt too long
-            history_to_include = chat_history[:-1] if len(chat_history) > 1 else []
+            history_to_include = server_chat_history[:-1] if len(server_chat_history) > 1 else []
             if len(history_to_include) > 10:
                 history_to_include = history_to_include[-10:]
             
@@ -127,19 +428,30 @@ IMPORTANT: In your response, ALWAYS include a section titled "DESTINATIONS TO AV
 Format your response like this:
 [Your main advice and recommendations]
 
+RECOMMENDED DESTINATIONS:
+- AAA: Reason why this destination is recommended
+- BBB: Reason why this destination is recommended
+- CCC: Reason why this destination is recommended
+
 DESTINATIONS TO AVOID:
-- AAA: Reason why this destination should be avoided
-- BBB: Reason why this destination should be avoided
-- CCC: Reason why this destination should be avoided
+- DDD: Reason why this destination should be avoided
+- EEE: Reason why this destination should be avoided
+- FFF: Reason why this destination should be avoided
+
+PREFERENCE BREAKDOWN:
+For each destination, provide:
+- Base Score: Based on cost and emissions
+- Group Preference: The average preference of all users
+- Individual Preference: This user's specific preference
+- Combined Score: The weighted score with all factors
 
 Remember:
 1. Consider the origins of all travelers when making recommendations
 2. Take into account each traveler's destination preferences when suggesting options
 3. Be specific and personalized in your advice
-4. If appropriate, suggest additional destinations that might work well for this group
+4. Always include both sections: "RECOMMENDED DESTINATIONS:" and "DESTINATIONS TO AVOID:"
 5. Be conversational and friendly
-6. Reference previous parts of the conversation when relevant
-7. ALWAYS include the "DESTINATIONS TO AVOID:" section with at least 2-3 destinations"""
+6. Reference previous parts of the conversation when relevant"""
 
         try:
             # List available models for debugging
@@ -183,96 +495,108 @@ Based on your current travel plan:
 
 I would recommend looking at destinations that provide a good balance of travel costs and convenience for everyone in your group. 
 
-For your specific group traveling from {', '.join([t.get('origin', 'Unknown') for t in travelers])}, consider:
-- Chicago (ORD) as a central meeting point with good flight connections
-- Miami (MIA) for a warm destination with good flight options from major cities
-- Denver (DEN) as a mountain getaway with direct flights from many cities
+RECOMMENDED DESTINATIONS:
+- ORD: Chicago is a central meeting point with good flight connections from most cities
+- MIA: Miami offers warm weather and good flight options from major cities
+- DEN: Denver provides a mountain getaway with direct flights from many cities
 
 DESTINATIONS TO AVOID:
-- Las Vegas (LAS): might be too hot during your travel dates
-- New York (JFK): could be overcrowded and expensive during this period
-- Boston (BOS): weather might not be ideal depending on your travel date
+- LAS: Las Vegas might be too hot during your travel dates
+- JFK: New York could be overcrowded and expensive during this period
+- BOS: Boston's weather might not be ideal depending on your travel date
+
+PREFERENCE BREAKDOWN:
+For ORD (Chicago):
+- Base Score: 82/100 (Good flight connections, moderate costs)
+- Group Preference: +2.5 (Generally liked by the group)
+- Individual Preference: +1.0 (Somewhat liked by you)
+- Combined Score: 85.5/100
 
 [Note: This is a mock response as the AI API experienced an error: {str(e)}]"""
 
-        # Extract destination recommendations from the assistant's message
-        # Look for airport codes in the response (3 uppercase letters)
-        airport_code_regex = r'\b([A-Z]{3})\b'
-        suggested_airports = list(set(re.findall(airport_code_regex, assistant_message)))
+        # Add the assistant response to the conversation history
+        assistant_entry = {
+            'role': 'assistant',
+            'content': assistant_message,
+            'timestamp': datetime.now().isoformat()
+        }
+        server_chat_history.append(assistant_entry)
         
-        # Generate a rating for each suggested destination (4-5 for explicitly recommended ones)
-        destination_recommendations = {}
+        # Keep history to a reasonable size
+        if len(server_chat_history) > 50:
+            server_chat_history = server_chat_history[-50:]
+            chat_histories[session_id] = server_chat_history
+            
+        # Print the current chat history for debugging
+        print(f"Session {session_id} has {len(server_chat_history)} messages")
+
+        # Extract recommended destinations from the assistant's message
+        recommended_destinations = {}
         destinations_to_avoid = {}
         
-        # Analyze the message for destinations to recommend vs avoid
+        # Extract recommended destinations section
+        recommended_section_match = re.search(r'RECOMMENDED DESTINATIONS:(.*?)(?:DESTINATIONS TO AVOID|\Z)', 
+                                         assistant_message, re.IGNORECASE | re.DOTALL)
         
-        # Positive recommendation patterns
-        recommendation_phrases = [
-            r'recommend ([A-Z]{3})',
-            r'suggest ([A-Z]{3})',
-            r'([A-Z]{3}) would be',
-            r'([A-Z]{3}) is a good',
-            r'([A-Z]{3}) is great',
-            r'consider ([A-Z]{3})',
-            r'([A-Z]{3}) is recommended',
-            r'([A-Z]{3}) would work well'
-        ]
+        # Extract destinations to avoid section
+        avoid_section_match = re.search(r'DESTINATIONS TO AVOID:(.*?)(?:\n\n|\Z)', 
+                                    assistant_message, re.IGNORECASE | re.DOTALL)
         
-        # Negative recommendation patterns
-        avoid_phrases = [
-            r'avoid ([A-Z]{3})',
-            r'not recommend ([A-Z]{3})',
-            r'skip ([A-Z]{3})',
-            r'([A-Z]{3}) would not be',
-            r'([A-Z]{3}) is not a good',
-            r'([A-Z]{3}) should be avoided',
-            r'([A-Z]{3}) might be too',
-            r'([A-Z]{3}) could be problematic',
-            r'([A-Z]{3}) would be expensive',
-            r'([A-Z]{3}) is crowded',
-            r'([A-Z]{3}) is not suitable'
-        ]
+        # Parse the recommended destinations
+        if recommended_section_match:
+            recommended_text = recommended_section_match.group(1).strip()
+            # Look for airport codes with ratings/explanations
+            for line in recommended_text.split('\n'):
+                airport_match = re.search(r'\b([A-Z]{3})\b', line)
+                if airport_match:
+                    airport_code = airport_match.group(1)
+                    # Rate 4-5 based on position and emphasis in text
+                    rating = 5 if re.search(r'highly|recommend|great|perfect|excellent', line, re.IGNORECASE) else 4
+                    recommended_destinations[airport_code] = rating
+        else:
+            # Fallback: look for airport codes in the entire message with positive context
+            positive_pattern = r'recommend\s+(?:.*?)\b([A-Z]{3})\b|suggest\s+(?:.*?)\b([A-Z]{3})\b|\b([A-Z]{3})\b\s+would be good'
+            positive_matches = re.finditer(positive_pattern, assistant_message, re.IGNORECASE)
+            for match in positive_matches:
+                airport_code = next(code for code in match.groups() if code)
+                recommended_destinations[airport_code] = 4
+                
+        # Parse the destinations to avoid
+        if avoid_section_match:
+            avoid_text = avoid_section_match.group(1).strip()
+            # Look for airport codes
+            for line in avoid_text.split('\n'):
+                airport_match = re.search(r'\b([A-Z]{3})\b', line)
+                if airport_match:
+                    airport_code = airport_match.group(1)
+                    # Rate -3 to -5 based on emphasis in text
+                    rating = -5 if re.search(r'strongly|avoid|terrible|worst|never', line, re.IGNORECASE) else -3
+                    destinations_to_avoid[airport_code] = rating
+        else:
+            # Fallback: look for airport codes with negative context
+            negative_pattern = r'avoid\s+(?:.*?)\b([A-Z]{3})\b|not recommend\s+(?:.*?)\b([A-Z]{3})\b|\b([A-Z]{3})\b\s+would not be'
+            negative_matches = re.finditer(negative_pattern, assistant_message, re.IGNORECASE)
+            for match in negative_matches:
+                airport_code = next(code for code in match.groups() if code)
+                destinations_to_avoid[airport_code] = -3
+
+        # Extract score breakdowns if available
+        score_breakdowns = {}
+        breakdown_pattern = r'For\s+([A-Z]{3}).*?Base Score:\s*([\d.]+).*?Group Preference:\s*([-+]?[\d.]+).*?Individual Preference:\s*([-+]?[\d.]+).*?Combined Score:\s*([\d.]+)'
+        breakdown_matches = re.finditer(breakdown_pattern, assistant_message, re.DOTALL | re.IGNORECASE)
         
-        # Check each airport code found in the message
-        for airport in suggested_airports:
-            # Default to a neutral rating
-            rating = 3
-            is_recommended = False
-            is_avoided = False
-            
-            # Check if it's explicitly recommended
-            for pattern in recommendation_phrases:
-                matches = re.findall(pattern, assistant_message, re.IGNORECASE)
-                if any(match.upper() == airport for match in matches):
-                    rating = 5
-                    is_recommended = True
-                    break
-                elif airport in assistant_message.split("\n")[0:5]:  # Mentioned early in response
-                    rating = 4
-                    is_recommended = True
-            
-            # Check if it's explicitly to be avoided
-            for pattern in avoid_phrases:
-                matches = re.findall(pattern, assistant_message, re.IGNORECASE)
-                if any(match.upper() == airport for match in matches):
-                    rating = -3
-                    is_avoided = True
-                    break
-            
-            # Also check if it appears in a section about avoiding
-            avoid_section_match = re.search(r'(?:destinations|places) to avoid:.*?(?:\n\n|\Z)', 
-                                           assistant_message, re.IGNORECASE | re.DOTALL)
-            if avoid_section_match and airport in avoid_section_match.group(0):
-                rating = -3
-                is_avoided = True
-            
-            # Add to appropriate category
-            if is_avoided:
-                destinations_to_avoid[airport] = rating
-            elif is_recommended or not is_avoided:
-                destination_recommendations[airport] = rating
+        for match in breakdown_matches:
+            airport = match.group(1)
+            score_breakdowns[airport] = {
+                "base_score": float(match.group(2)),
+                "group_preference": float(match.group(3)),
+                "individual_preference": float(match.group(4)),
+                "combined_score": float(match.group(5))
+            }
         
-        # Also extract general preferences from the response
+        # Generate a rating for each suggested destination (4-5 for explicitly recommended ones)
+        
+        # Extract general preferences from the response
         general_preference_suggestions = []
         
         # Look for airline suggestions
@@ -310,9 +634,6 @@ DESTINATIONS TO AVOID:
                     'value': time_value
                 })
         
-        # NEW CODE: Analyze user message for sentiment about destinations and suggest modifications
-        preference_modifications = []
-        
         # Get existing preferred destinations from general preferences
         existing_destinations = {}
         print("Current general preferences:")
@@ -325,95 +646,51 @@ DESTINATIONS TO AVOID:
                 print(f"- {airport_code}: rating {rating}")
         
         print(f"Found {len(existing_destinations)} existing destination preferences")
-        
-        # Look for positive sentiment patterns about destinations
-        positive_patterns = [
-            r'I like ([A-Z]{3})',
-            r'I love ([A-Z]{3})',
-            r'([A-Z]{3}) sounds? good',
-            r'([A-Z]{3}) sounds? great',
-            r'([A-Z]{3}) sounds? perfect',
-            r'interested in ([A-Z]{3})',
-            r'prefer ([A-Z]{3})'
-        ]
-        
-        # Look for negative sentiment patterns about destinations
-        negative_patterns = [
-            r'I don\'?t like ([A-Z]{3})',
-            r'I hate ([A-Z]{3})',
-            r'([A-Z]{3}) is bad',
-            r'([A-Z]{3}) is terrible',
-            r'not interested in ([A-Z]{3})',
-            r'avoid ([A-Z]{3})',
-            r'don\'?t want ([A-Z]{3})'
-        ]
-        
-        # Process positive sentiment
-        for pattern in positive_patterns:
-            matches = re.findall(pattern, message)
-            for airport in matches:
-                # Normalize the airport code (ensure uppercase)
-                airport = airport.strip().upper()
-                
-                # If this is an existing preference, increase the rating (max 5)
-                if airport in existing_destinations:
-                    print(f"Modifying existing preference for {airport} (positive)")
-                    current_rating = existing_destinations[airport]
-                    new_rating = min(5, current_rating + 1)  # Increase by 1, max 5
-                    
-                    preference_modifications.append({
+            
+        # Format the preference modifications for client-side updates
+        client_preference_updates = []
+        if preference_updates and preference_updates["modifications"]:
+            for mod in preference_updates["modifications"]:
+                if mod["category"] == "destination":
+                    client_preference_updates.append({
                         'type': 'preferred_destination',
-                        'value': airport,
-                        'rating': new_rating,
-                        'sentiment': 'positive'
+                        'value': mod["key"],
+                        'rating': mod["new_rating"],
+                        'sentiment': 'positive' if mod["new_rating"] > 0 else 'negative'
                     })
-                # If this is a new preference, add it with rating 4
+                elif mod["category"] == "airline":
+                    client_preference_updates.append({
+                        'type': 'airline',
+                        'value': mod["original"],
+                        'rating': mod["new_rating"]
+                    })
                 else:
-                    print(f"Adding new preference for {airport} (positive)")
-                    preference_modifications.append({
-                        'type': 'preferred_destination',
-                        'value': airport,
-                        'rating': 4,
-                        'sentiment': 'positive'
-                    })
-        
-        # Process negative sentiment
-        for pattern in negative_patterns:
-            matches = re.findall(pattern, message)
-            for airport in matches:
-                # Normalize the airport code (ensure uppercase)
-                airport = airport.strip().upper()
-                
-                # If this is an existing preference, decrease the rating (min -5 for strong negative)
-                if airport in existing_destinations:
-                    print(f"Modifying existing preference for {airport} (negative)")
-                    current_rating = existing_destinations[airport]
-                    new_rating = max(-5, current_rating - 2)  # Decrease by 2, min -5
-                    
-                    preference_modifications.append({
-                        'type': 'preferred_destination',
-                        'value': airport,
-                        'rating': new_rating,
-                        'sentiment': 'negative'
-                    })
-                # If this is a new preference, add it with negative rating
-                else:
-                    print(f"Adding new preference for {airport} (negative)")
-                    preference_modifications.append({
-                        'type': 'preferred_destination',
-                        'value': airport,
-                        'rating': -3,
-                        'sentiment': 'negative'
+                    client_preference_updates.append({
+                        'type': mod["category"],
+                        'value': mod["original"],
+                        'rating': mod["new_rating"]
                     })
 
-        return jsonify({
+        print(f"Returning: {len(recommended_destinations)} recommended destinations, {len(destinations_to_avoid)} destinations to avoid")
+        response = jsonify({
             'status': 'success',
             'message': assistant_message,
-            'destination_recommendations': destination_recommendations,
+            'destination_recommendations': recommended_destinations,
             'destinations_to_avoid': destinations_to_avoid,
             'general_preference_suggestions': general_preference_suggestions,
-            'preference_modifications': preference_modifications
+            'preference_modifications': client_preference_updates,
+            'chat_history': server_chat_history,
+            'preference_updates': preference_updates,
+            'score_breakdowns': score_breakdowns,
+            'action': 'update_preferences',
+            'user_id': session_id
         })
+        
+        # Set a session ID cookie if not already set
+        if not request.cookies.get('session_id'):
+            response.set_cookie('session_id', session_id, max_age=60*60*24*30)  # 30 days expiry
+            
+        return response
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -433,6 +710,9 @@ def find_destinations():
         preference_weight = float(data.get('preferenceWeight', 0.2))
         general_preferences = data.get('generalPreferences', [])
         
+        # Get user ID for preference lookup
+        session_id = request.cookies.get('session_id')
+        
         # Validate data
         if not travelers_data or not candidate_destinations or not travel_date:
             return jsonify({'error': 'Missing required data'}), 400
@@ -448,6 +728,12 @@ def find_destinations():
             traveler = Traveler(t['name'], t['origin'], preferences)
             travelers.append(traveler)
         
+        # Build external preference store
+        external_preference_store = {
+            'individual': individual_preferences,
+            'group': group_preferences
+        }
+        
         # Find optimal destinations
         api_key = os.environ.get("SKYSCANNER_API_KEY", "your_api_key_here")
         optimal_destinations = find_optimal_destinations(
@@ -460,7 +746,9 @@ def find_destinations():
             emissions_weight=emissions_weight,
             preference_weight=preference_weight,
             max_results_per_route=1,
-            general_preferences=general_preferences
+            general_preferences=general_preferences,
+            user_id=session_id,
+            external_preference_store=external_preference_store
         )
         
         # Convert to JSON-serializable format
@@ -480,15 +768,21 @@ def find_destinations():
                     'emissions_kg': flight_info.emissions_kg,
                     'flight_number': flight_info.flight_number,
                 })
-                
-            results.append({
+            
+            result = {
                 'destination': dest.destination_code,
                 'total_cost': dest.total_cost,
                 'average_cost': dest.average_cost,
                 'total_emissions': dest.total_emissions,
                 'score': dest.score,
                 'flight_plans': flight_plans
-            })
+            }
+            
+            # Add score breakdowns if available
+            if hasattr(dest, 'score_breakdowns') and dest.score_breakdowns:
+                result['score_breakdowns'] = dest.score_breakdowns
+                
+            results.append(result)
             
         # Debug log
         print("API response:", results)
