@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Travel Reunion Planner</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header class="text-center my-4">
+            <h1>Travel Reunion Planner</h1>
+            <p class="lead">Find the perfect destination for your group to meet</p>
+        </header>
+
+        <div class="row">
+            <div class="col-md-5">
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h3>Plan Your Reunion</h3>
+                    </div>
+                    <div class="card-body">
+                        <form id="plannerForm">
+                            <div class="mb-3">
+                                <label for="travelDate" class="form-label">Travel Date</label>
+                                <input type="text" class="form-control" id="travelDate" placeholder="Select date" required>
+                            </div>
+
+                            <div class="mb-3">
+                                <label class="form-label">Preferences</label>
+                                <div class="row align-items-center">
+                                    <div class="col-md-6">
+                                        <label for="costWeight" class="form-label">Cost Weight</label>
+                                        <input type="range" class="form-range" id="costWeight" min="0.1" max="0.9" step="0.1" value="0.7">
+                                        <div class="text-center">
+                                            <span id="costWeightValue">0.7</span>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label for="emissionsWeight" class="form-label">Emissions Weight</label>
+                                        <input type="range" class="form-range" id="emissionsWeight" min="0.1" max="0.9" step="0.1" value="0.3">
+                                        <div class="text-center">
+                                            <span id="emissionsWeightValue">0.3</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="mb-3">
+                                <label class="form-label">Travelers</label>
+                                <div id="travelersContainer">
+                                    <!-- Traveler inputs will be added here -->
+                                </div>
+                                <button type="button" id="addTravelerBtn" class="btn btn-outline-primary mt-2">
+                                    <i class="bi bi-plus"></i> Add Traveler
+                                </button>
+                            </div>
+
+                            <div class="mb-3">
+                                <label class="form-label">Destination Options</label>
+                                <div id="destinationsContainer" class="mb-2">
+                                    <div class="form-text mb-2">Select potential destinations to consider</div>
+                                    <!-- Destination checkboxes will be added here -->
+                                </div>
+                            </div>
+
+                            <button type="submit" class="btn btn-primary w-100 mt-3">Find Best Destinations</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-7">
+                <div id="resultsContainer" class="mb-4 d-none">
+                    <div class="card">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <h3 class="mb-0">Top Destinations</h3>
+                            <div class="spinner-border text-primary d-none" id="loadingSpinner" role="status">
+                                <span class="visually-hidden">Loading...</span>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div id="destinationResults"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Traveler template -->
+    <template id="travelerTemplate">
+        <div class="traveler-entry card mb-3">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <h5 class="card-title mb-0">Traveler</h5>
+                    <button type="button" class="btn-close remove-traveler" aria-label="Remove traveler"></button>
+                </div>
+                <div class="row g-2">
+                    <div class="col-md-6">
+                        <label class="form-label">Name</label>
+                        <input type="text" class="form-control traveler-name" placeholder="Name" required>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Origin Airport</label>
+                        <select class="form-select traveler-origin" required>
+                            <option value="">Select Airport</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </template>
+
+    <!-- Destination template -->
+    <template id="destinationResultTemplate">
+        <div class="destination-result mb-4">
+            <h4 class="destination-header"></h4>
+            <div class="destination-details row mb-3">
+                <div class="col-md-4">
+                    <div class="card text-center">
+                        <div class="card-body">
+                            <h5 class="card-title">Total Cost</h5>
+                            <p class="card-text total-cost"></p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card text-center">
+                        <div class="card-body">
+                            <h5 class="card-title">Avg Per Person</h5>
+                            <p class="card-text avg-cost"></p>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card text-center">
+                        <div class="card-body">
+                            <h5 class="card-title">CO₂ Emissions</h5>
+                            <p class="card-text emissions"></p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <h5>Flight Details</h5>
+            <div class="flight-plans"></div>
+        </div>
+    </template>
+
+    <!-- Flight plan template -->
+    <template id="flightPlanTemplate">
+        <div class="card mb-2 flight-plan">
+            <div class="card-header">
+                <span class="traveler-name fw-bold"></span>
+                <span class="text-muted traveler-origin"></span>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-4">
+                        <div class="flight-airline mb-1"></div>
+                        <div class="flight-price"></div>
+                    </div>
+                    <div class="col-md-8">
+                        <div class="flight-times d-flex justify-content-between">
+                            <div class="departure">
+                                <div class="text-muted small">Departure</div>
+                                <div class="flight-departure"></div>
+                            </div>
+                            <div class="flight-duration text-center">
+                                <div class="text-muted small">Duration</div>
+                                <div></div>
+                            </div>
+                            <div class="arrival text-end">
+                                <div class="text-muted small">Arrival</div>
+                                <div class="flight-arrival"></div>
+                            </div>
+                        </div>
+                        <div class="flight-emissions text-muted mt-2 small"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </template>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html> 
