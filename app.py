@@ -87,8 +87,8 @@ Remember:
             # List available models for debugging
             print("Available Gemini models:", [model.name for model in genai.list_models()])
             
-            # Initialize Gemini model - use correct model name
-            model = genai.GenerativeModel('models/gemini-pro')
+            # Initialize Gemini model - use a valid model from the available models list
+            model = genai.GenerativeModel('models/gemini-1.5-flash-latest')
             
             # Generate response
             response = model.generate_content(prompt)
