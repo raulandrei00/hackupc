@@ -40,6 +40,7 @@ def chat_api():
         data = request.json
         message = data.get('message', '')
         preferences = data.get('preferences', {})
+        chat_history = data.get('chat_history', [])
         
         # Extract detailed preferences
         travel_date = preferences.get('travelDate', 'Not specified')
@@ -82,6 +83,20 @@ def chat_api():
         
         # Format destination options
         destination_info = ", ".join(destinations) if destinations else "Not specified"
+        
+        # Format chat history for context (excluding the current message)
+        chat_context = ""
+        if len(chat_history) > 1:  # If there's previous conversation
+            chat_context = "PREVIOUS CONVERSATION:\n"
+            # Include up to the last 5 exchanges (10 messages) to avoid making prompt too long
+            history_to_include = chat_history[:-1] if len(chat_history) > 1 else []
+            if len(history_to_include) > 10:
+                history_to_include = history_to_include[-10:]
+            
+            for entry in history_to_include:
+                role = "User" if entry.get('role') == 'user' else "Assistant"
+                content = entry.get('content', '')
+                chat_context += f"{role}: {content}\n\n"
 
         # Format the prompt with user preferences
         prompt = f"""You are a travel planning assistant helping users find the best destination for a group trip. The user has provided the following information:
@@ -101,24 +116,48 @@ TRAVELERS ({len(travelers)}):
 DESTINATION OPTIONS:
 {destination_info}
 
+{chat_context}
 USER QUESTION:
 {message}
 
 Provide helpful travel advice based on this information. If you suggest specific destinations, use the standard 3-letter airport codes (like LAX, JFK, etc.) and explain why they might work well for this group.
+
+IMPORTANT: In your response, ALWAYS include a section titled "DESTINATIONS TO AVOID:" followed by at least 2-3 destinations that would NOT be suitable for this group based on their preferences. For each destination to avoid, include the airport code and explain why it should be avoided.
+
+Format your response like this:
+[Your main advice and recommendations]
+
+DESTINATIONS TO AVOID:
+- AAA: Reason why this destination should be avoided
+- BBB: Reason why this destination should be avoided
+- CCC: Reason why this destination should be avoided
 
 Remember:
 1. Consider the origins of all travelers when making recommendations
 2. Take into account each traveler's destination preferences when suggesting options
 3. Be specific and personalized in your advice
 4. If appropriate, suggest additional destinations that might work well for this group
-5. Be conversational and friendly"""
+5. Be conversational and friendly
+6. Reference previous parts of the conversation when relevant
+7. ALWAYS include the "DESTINATIONS TO AVOID:" section with at least 2-3 destinations"""
 
         try:
             # List available models for debugging
             print("Available Gemini models:", [model.name for model in genai.list_models()])
             
-            # Initialize Gemini model - use a valid model from the available models list
-            model = genai.GenerativeModel('models/gemini-1.5-flash-latest')
+            # Initialize Gemini model - try different models in case of failure
+            try:
+                # First try with gemini-1.5-flash-latest
+                model = genai.GenerativeModel('models/gemini-1.5-flash-latest')
+            except Exception as model_error:
+                print(f"First model failed: {str(model_error)}")
+                try:
+                    # Then try with gemini-1.5-flash
+                    model = genai.GenerativeModel('models/gemini-1.5-flash')
+                except Exception as model_error2:
+                    print(f"Second model failed: {str(model_error2)}")
+                    # Finally try with the simplest model
+                    model = genai.GenerativeModel('models/gemini-pro')
             
             # Generate response
             response = model.generate_content(prompt)
@@ -131,6 +170,10 @@ Remember:
         except Exception as e:
             # Return a mock response if API call fails
             print(f"Gemini API error: {str(e)}")
+            print(f"Error type: {type(e).__name__}")
+            print(f"Error details: {e}")
+            import traceback
+            traceback.print_exc()
             assistant_message = f"""I'd be happy to help with your travel planning!
 
 Based on your current travel plan:
@@ -145,9 +188,12 @@ For your specific group traveling from {', '.join([t.get('origin', 'Unknown') fo
 - Miami (MIA) for a warm destination with good flight options from major cities
 - Denver (DEN) as a mountain getaway with direct flights from many cities
 
-When you've made your choice, you can use the "Find Best Destinations" button to get detailed flight information.
+DESTINATIONS TO AVOID:
+- Las Vegas (LAS): might be too hot during your travel dates
+- New York (JFK): could be overcrowded and expensive during this period
+- Boston (BOS): weather might not be ideal depending on your travel date
 
-[Note: This is a mock response as the AI API experienced an error]"""
+[Note: This is a mock response as the AI API experienced an error: {str(e)}]"""
 
         # Extract destination recommendations from the assistant's message
         # Look for airport codes in the response (3 uppercase letters)
@@ -156,27 +202,75 @@ When you've made your choice, you can use the "Find Best Destinations" button to
         
         # Generate a rating for each suggested destination (4-5 for explicitly recommended ones)
         destination_recommendations = {}
+        destinations_to_avoid = {}
+        
+        # Analyze the message for destinations to recommend vs avoid
+        
+        # Positive recommendation patterns
+        recommendation_phrases = [
+            r'recommend ([A-Z]{3})',
+            r'suggest ([A-Z]{3})',
+            r'([A-Z]{3}) would be',
+            r'([A-Z]{3}) is a good',
+            r'([A-Z]{3}) is great',
+            r'consider ([A-Z]{3})',
+            r'([A-Z]{3}) is recommended',
+            r'([A-Z]{3}) would work well'
+        ]
+        
+        # Negative recommendation patterns
+        avoid_phrases = [
+            r'avoid ([A-Z]{3})',
+            r'not recommend ([A-Z]{3})',
+            r'skip ([A-Z]{3})',
+            r'([A-Z]{3}) would not be',
+            r'([A-Z]{3}) is not a good',
+            r'([A-Z]{3}) should be avoided',
+            r'([A-Z]{3}) might be too',
+            r'([A-Z]{3}) could be problematic',
+            r'([A-Z]{3}) would be expensive',
+            r'([A-Z]{3}) is crowded',
+            r'([A-Z]{3}) is not suitable'
+        ]
+        
+        # Check each airport code found in the message
         for airport in suggested_airports:
-            # Give higher ratings to airports mentioned more prominently
-            # Basic heuristic: if airport is mentioned in context that suggests recommendation
-            recommendation_phrases = [
-                f"recommend {airport}",
-                f"suggest {airport}",
-                f"{airport} would be",
-                f"{airport} is a good",
-                f"{airport} is great",
-                f"consider {airport}"
-            ]
+            # Default to a neutral rating
+            rating = 3
+            is_recommended = False
+            is_avoided = False
             
-            rating = 3  # Default rating for mentioned airports
-            for phrase in recommendation_phrases:
-                if phrase.lower() in assistant_message.lower():
+            # Check if it's explicitly recommended
+            for pattern in recommendation_phrases:
+                matches = re.findall(pattern, assistant_message, re.IGNORECASE)
+                if any(match.upper() == airport for match in matches):
                     rating = 5
+                    is_recommended = True
                     break
                 elif airport in assistant_message.split("\n")[0:5]:  # Mentioned early in response
                     rating = 4
+                    is_recommended = True
             
-            destination_recommendations[airport] = rating
+            # Check if it's explicitly to be avoided
+            for pattern in avoid_phrases:
+                matches = re.findall(pattern, assistant_message, re.IGNORECASE)
+                if any(match.upper() == airport for match in matches):
+                    rating = -3
+                    is_avoided = True
+                    break
+            
+            # Also check if it appears in a section about avoiding
+            avoid_section_match = re.search(r'(?:destinations|places) to avoid:.*?(?:\n\n|\Z)', 
+                                           assistant_message, re.IGNORECASE | re.DOTALL)
+            if avoid_section_match and airport in avoid_section_match.group(0):
+                rating = -3
+                is_avoided = True
+            
+            # Add to appropriate category
+            if is_avoided:
+                destinations_to_avoid[airport] = rating
+            elif is_recommended or not is_avoided:
+                destination_recommendations[airport] = rating
         
         # Also extract general preferences from the response
         general_preference_suggestions = []
@@ -216,11 +310,109 @@ When you've made your choice, you can use the "Find Best Destinations" button to
                     'value': time_value
                 })
         
+        # NEW CODE: Analyze user message for sentiment about destinations and suggest modifications
+        preference_modifications = []
+        
+        # Get existing preferred destinations from general preferences
+        existing_destinations = {}
+        print("Current general preferences:")
+        for pref in general_preferences:
+            if pref.get('type') == 'preferred_destination':
+                # Normalize airport code to uppercase
+                airport_code = pref.get('value', '').strip().upper()
+                rating = pref.get('rating', 3)
+                existing_destinations[airport_code] = rating
+                print(f"- {airport_code}: rating {rating}")
+        
+        print(f"Found {len(existing_destinations)} existing destination preferences")
+        
+        # Look for positive sentiment patterns about destinations
+        positive_patterns = [
+            r'I like ([A-Z]{3})',
+            r'I love ([A-Z]{3})',
+            r'([A-Z]{3}) sounds? good',
+            r'([A-Z]{3}) sounds? great',
+            r'([A-Z]{3}) sounds? perfect',
+            r'interested in ([A-Z]{3})',
+            r'prefer ([A-Z]{3})'
+        ]
+        
+        # Look for negative sentiment patterns about destinations
+        negative_patterns = [
+            r'I don\'?t like ([A-Z]{3})',
+            r'I hate ([A-Z]{3})',
+            r'([A-Z]{3}) is bad',
+            r'([A-Z]{3}) is terrible',
+            r'not interested in ([A-Z]{3})',
+            r'avoid ([A-Z]{3})',
+            r'don\'?t want ([A-Z]{3})'
+        ]
+        
+        # Process positive sentiment
+        for pattern in positive_patterns:
+            matches = re.findall(pattern, message)
+            for airport in matches:
+                # Normalize the airport code (ensure uppercase)
+                airport = airport.strip().upper()
+                
+                # If this is an existing preference, increase the rating (max 5)
+                if airport in existing_destinations:
+                    print(f"Modifying existing preference for {airport} (positive)")
+                    current_rating = existing_destinations[airport]
+                    new_rating = min(5, current_rating + 1)  # Increase by 1, max 5
+                    
+                    preference_modifications.append({
+                        'type': 'preferred_destination',
+                        'value': airport,
+                        'rating': new_rating,
+                        'sentiment': 'positive'
+                    })
+                # If this is a new preference, add it with rating 4
+                else:
+                    print(f"Adding new preference for {airport} (positive)")
+                    preference_modifications.append({
+                        'type': 'preferred_destination',
+                        'value': airport,
+                        'rating': 4,
+                        'sentiment': 'positive'
+                    })
+        
+        # Process negative sentiment
+        for pattern in negative_patterns:
+            matches = re.findall(pattern, message)
+            for airport in matches:
+                # Normalize the airport code (ensure uppercase)
+                airport = airport.strip().upper()
+                
+                # If this is an existing preference, decrease the rating (min -5 for strong negative)
+                if airport in existing_destinations:
+                    print(f"Modifying existing preference for {airport} (negative)")
+                    current_rating = existing_destinations[airport]
+                    new_rating = max(-5, current_rating - 2)  # Decrease by 2, min -5
+                    
+                    preference_modifications.append({
+                        'type': 'preferred_destination',
+                        'value': airport,
+                        'rating': new_rating,
+                        'sentiment': 'negative'
+                    })
+                # If this is a new preference, add it with negative rating
+                else:
+                    print(f"Adding new preference for {airport} (negative)")
+                    preference_modifications.append({
+                        'type': 'preferred_destination',
+                        'value': airport,
+                        'rating': -3,
+                        'sentiment': 'negative'
+                    })
+
         return jsonify({
             'status': 'success',
             'message': assistant_message,
             'destination_recommendations': destination_recommendations,
-            'general_preference_suggestions': general_preference_suggestions
+            'destinations_to_avoid': destinations_to_avoid,
+            'general_preference_suggestions': general_preference_suggestions,
+            'preference_modifications': preference_modifications
         })
 
     except Exception as e:
@@ -267,7 +459,8 @@ def find_destinations():
             cost_weight=cost_weight,
             emissions_weight=emissions_weight,
             preference_weight=preference_weight,
-            max_results_per_route=1
+            max_results_per_route=1,
+            general_preferences=general_preferences
         )
         
         # Convert to JSON-serializable format

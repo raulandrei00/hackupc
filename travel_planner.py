@@ -298,7 +298,8 @@ def find_optimal_destinations(
     cost_weight: float = 0.6,
     emissions_weight: float = 0.2,
     preference_weight: float = 0.2,
-    max_workers: int = 5
+    max_workers: int = 5,
+    general_preferences: List[Dict] = None
 ) -> List[DestinationScore]:
     """
     Find the optimal destinations for a group of travelers.
@@ -314,6 +315,7 @@ def find_optimal_destinations(
         emissions_weight: Weight for emissions in scoring (0-1)
         preference_weight: Weight for traveler preferences in scoring (0-1)
         max_workers: Maximum number of concurrent API requests
+        general_preferences: List of general preference objects
         
     Returns:
         List of DestinationScore objects for valid destinations, sorted by score
@@ -338,7 +340,7 @@ def find_optimal_destinations(
     
     # Calculate scores for ranking
     scored_destinations = calculate_scores(
-        valid_destinations, cost_weight, emissions_weight, preference_weight
+        valid_destinations, cost_weight, emissions_weight, preference_weight, general_preferences
     )
     
     # Sort by score (lower is better)
@@ -432,16 +434,18 @@ def calculate_scores(
     destinations: List[DestinationScore],
     cost_weight: float,
     emissions_weight: float,
-    preference_weight: float
+    preference_weight: float,
+    general_preferences: List[Dict] = None
 ) -> List[DestinationScore]:
     """
-    Calculate scores for destinations based on cost, emissions, and traveler preferences.
+    Calculate scores for destinations based on cost, emissions, traveler preferences, and general preferences.
     
     Args:
         destinations: List of DestinationScore objects
         cost_weight: Weight for cost in scoring (0-1)
         emissions_weight: Weight for emissions in scoring (0-1)
         preference_weight: Weight for traveler preferences in scoring (0-1)
+        general_preferences: List of general preference objects
         
     Returns:
         Updated list of DestinationScore objects with scores
@@ -449,13 +453,47 @@ def calculate_scores(
     if not destinations:
         return []
     
+    # Initialize general preferences
+    if general_preferences is None:
+        general_preferences = []
+        
+    # Get destination-specific general preferences
+    general_destination_preferences = {}
+    general_airline_preferences = []
+    general_time_preferences = []
+    
+    # Process general preferences by type
+    for pref in general_preferences:
+        pref_type = pref.get('type', '')
+        if pref_type == 'preferred_destination':
+            dest = pref.get('value', '').strip().upper()
+            rating = pref.get('rating', 3)
+            if dest:
+                general_destination_preferences[dest] = rating
+        elif pref_type == 'airline':
+            general_airline_preferences.append(pref.get('value', '').strip())
+        elif pref_type in ['departure_time', 'arrival_time']:
+            general_time_preferences.append({
+                'type': pref_type,
+                'value': pref.get('value', '')
+            })
+    
+    # Log general preferences
+    logger.info(f"General destination preferences: {general_destination_preferences}")
+    logger.info(f"General airline preferences: {general_airline_preferences}")
+    logger.info(f"General time preferences: {general_time_preferences}")
+    
+    # Set weights for general preferences
+    general_preference_weight = 0.4  # High weight for general preferences
+    
     # Adjust weights to ensure they sum to 1
     total_weight = cost_weight + emissions_weight + preference_weight
-    cost_weight = cost_weight / total_weight
-    emissions_weight = emissions_weight / total_weight
-    preference_weight = preference_weight / total_weight
+    cost_weight = cost_weight / total_weight * 0.6  # Reduce to 60% of original weight
+    emissions_weight = emissions_weight / total_weight * 0.6  # Reduce to 60% of original weight 
+    preference_weight = preference_weight / total_weight * 0.6  # Reduce to 60% of original weight
     
-    logger.info(f"Adjusted weights - Cost: {cost_weight:.2f}, Emissions: {emissions_weight:.2f}, Preference: {preference_weight:.2f}")
+    logger.info(f"Adjusted weights - Cost: {cost_weight:.2f}, Emissions: {emissions_weight:.2f}, " +
+               f"Preference: {preference_weight:.2f}, General Preference: {general_preference_weight:.2f}")
     
     # Find max and min values for normalization
     max_cost = max(d.total_cost for d in destinations)
@@ -500,11 +538,21 @@ def calculate_scores(
             # No preferences specified, use neutral value
             norm_preference = 0.5
         
+        # Calculate general preference score
+        general_pref_score = calculate_general_preference_score(
+            destination.destination_code,
+            destination.flight_plans,
+            general_destination_preferences,
+            general_airline_preferences,
+            general_time_preferences
+        )
+        
         # Calculate weighted score (lower is better)
         weighted_score = (
             (cost_weight * norm_cost) + 
             (emissions_weight * norm_emissions) + 
-            (preference_weight * norm_preference)
+            (preference_weight * norm_preference) +
+            (general_preference_weight * general_pref_score)
         )
         
         # Ensure score is between 0 and 1
@@ -512,9 +560,90 @@ def calculate_scores(
         
         logger.info(f"Destination {destination.destination_code} scores - Cost: {norm_cost:.2f}, " +
                    f"Emissions: {norm_emissions:.2f}, Preference: {norm_preference:.2f}, " +
-                   f"Final Score: {destination.score:.2f}")
+                   f"General Pref: {general_pref_score:.2f}, Final Score: {destination.score:.2f}")
     
     return destinations
+
+
+def calculate_general_preference_score(
+    destination_code: str,
+    flight_plans: List[TravelerFlightPlan],
+    general_destination_preferences: Dict[str, float],
+    general_airline_preferences: List[str],
+    general_time_preferences: List[Dict]
+) -> float:
+    """
+    Calculate a score based on how well the destination and flights match general preferences.
+    
+    Args:
+        destination_code: IATA code of the destination
+        flight_plans: List of TravelerFlightPlan objects
+        general_destination_preferences: Dictionary of destination preferences
+        general_airline_preferences: List of preferred airlines
+        general_time_preferences: List of time preference dictionaries
+    
+    Returns:
+        Score between 0 and 1 (lower is better)
+    """
+    scores = []
+    
+    # 1. Destination preference score
+    if destination_code in general_destination_preferences:
+        # Get rating (1-5 scale, with negative values for disliked destinations)
+        rating = general_destination_preferences[destination_code]
+        if rating < 0:
+            # Strongly penalize negative ratings (disliked destinations)
+            scores.append(1.0)  # Worst score
+        else:
+            # For positive ratings, convert to 0-1 scale (higher rating = lower score = better)
+            scores.append(1 - ((rating - 1) / 4))
+    
+    # 2. Airline preference score
+    if general_airline_preferences:
+        airline_matches = 0
+        for plan in flight_plans:
+            if any(airline.lower() in plan.flight.airline.lower() for airline in general_airline_preferences):
+                airline_matches += 1
+        
+        # Calculate percentage of flights matching preferred airlines
+        airline_score = 1.0 - (airline_matches / len(flight_plans))
+        scores.append(airline_score)
+    
+    # 3. Time preference score
+    if general_time_preferences:
+        time_matches = 0
+        for plan in flight_plans:
+            flight = plan.flight
+            for time_pref in general_time_preferences:
+                pref_type = time_pref.get('type')
+                pref_value = time_pref.get('value', '').lower()
+                
+                if pref_type == 'departure_time':
+                    departure_hour = flight.departure_time.hour
+                    if ('morning' in pref_value and 5 <= departure_hour < 12) or \
+                       ('afternoon' in pref_value and 12 <= departure_hour < 17) or \
+                       ('evening' in pref_value and 17 <= departure_hour < 21) or \
+                       ('night' in pref_value and (21 <= departure_hour or departure_hour < 5)):
+                        time_matches += 1
+                        
+                elif pref_type == 'arrival_time':
+                    arrival_hour = flight.arrival_time.hour
+                    if ('morning' in pref_value and 5 <= arrival_hour < 12) or \
+                       ('afternoon' in pref_value and 12 <= arrival_hour < 17) or \
+                       ('evening' in pref_value and 17 <= arrival_hour < 21) or \
+                       ('night' in pref_value and (21 <= arrival_hour or arrival_hour < 5)):
+                        time_matches += 1
+        
+        if len(flight_plans) * len(general_time_preferences) > 0:
+            time_score = 1.0 - (time_matches / (len(flight_plans) * len(general_time_preferences)))
+            scores.append(time_score)
+    
+    # If we have no score components, use a neutral score
+    if not scores:
+        return 0.5
+    
+    # Average all score components
+    return sum(scores) / len(scores)
 
 
 def format_currency(amount: float) -> str:
@@ -642,7 +771,13 @@ def main():
         cost_weight=0.7,
         emissions_weight=0.3,
         max_results_per_route=1,
-        max_workers=1 if not use_mock else 5  # Use only 1 worker with real API to avoid rate limits
+        max_workers=1 if not use_mock else 5,  # Use only 1 worker with real API to avoid rate limits
+        general_preferences=[
+            {'type': 'preferred_destination', 'value': 'New York', 'rating': 5},
+            {'type': 'airline', 'value': 'Delta'},
+            {'type': 'departure_time', 'value': 'morning'},
+            {'type': 'arrival_time', 'value': 'evening'}
+        ]
     )
     
     # Print results

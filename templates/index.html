@@ -104,9 +104,17 @@
                             
                             <!-- General Preferences Section -->
                             <div class="mb-3">
-                                <label class="form-label">General Preferences</label>
+                                <label class="form-label">General Preferences <span class="badge bg-primary">High Priority</span></label>
                                 <div id="generalPreferencesContainer" class="border rounded p-3">
-                                    <div class="form-text mb-2">Add general preferences that apply to everyone</div>
+                                    <div class="form-text mb-2">
+                                        Add general preferences that apply to everyone. These preferences have <strong>special weight</strong> in determining the best destinations and flights. The system will prioritize:
+                                        <ul class="small mt-1">
+                                            <li><strong>Preferred destinations</strong> with positive ratings</li>
+                                            <li>Flights with your <strong>preferred airlines</strong></li> 
+                                            <li>Flights that match your <strong>preferred departure/arrival times</strong></li>
+                                            <li>Destinations with <strong>negative ratings</strong> will be strongly avoided</li>
+                                        </ul>
+                                    </div>
                                     <div id="generalPreferencesList"></div>
                                     <button type="button" id="addGeneralPrefBtn" class="btn btn-sm btn-outline-secondary mt-2">
                                         <i class="bi bi-plus"></i> Add General Preference
