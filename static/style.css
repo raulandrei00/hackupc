@@ -16,16 +16,14 @@ header h1 {
 
 /* Cards */
 .card {
-    border-radius: 10px;
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-    border: none;
-    overflow: hidden;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    margin-bottom: 20px;
 }
 
 .card-header {
-    background-color: #3498db;
-    color: white;
-    font-weight: 600;
+    background-color: #f8f9fa;
+    border-bottom: 1px solid #e9ecef;
 }
 
 /* Form elements */
@@ -55,17 +53,13 @@ header h1 {
 
 /* Destination results */
 .destination-header {
-    color: #2c3e50;
-    font-weight: 700;
-    margin-bottom: 1rem;
-    padding-bottom: 0.5rem;
-    border-bottom: 2px solid #3498db;
+    padding: 10px 0;
+    margin-bottom: 15px;
+    border-bottom: 1px solid #e9ecef;
 }
 
-.flight-plan .card-header {
-    background-color: #f8f9fa;
-    color: #2c3e50;
-    border-bottom: 1px solid #e9ecef;
+.flight-plan {
+    border-left: 3px solid #28a745;
 }
 
 .flight-airline {
@@ -102,19 +96,19 @@ header h1 {
 }
 
 /* Responsive adjustments */
-@media (max-width: 768px) {
+@media (max-width: 767px) {
     .flight-times {
         flex-direction: column;
         align-items: flex-start;
     }
     
-    .flight-times .arrival {
-        text-align: left !important;
-        margin-top: 10px;
-    }
-    
     .flight-duration {
         margin: 10px 0;
+        text-align: left;
+    }
+    
+    .arrival {
+        text-align: left;
     }
 }
 
@@ -159,4 +153,38 @@ header h1 {
 
 .card-text.emissions {
     color: #e67e22; /* Orange for emissions */
-} 
+}
+
+/* Traveler styles */
+.traveler-entry {
+    border-left: 3px solid #007bff;
+}
+
+.remove-traveler {
+    cursor: pointer;
+}
+
+/* Rating stars */
+.rating-stars {
+    display: inline-flex;
+    font-size: 1.25rem;
+    color: #adb5bd;
+}
+
+.rating-stars .bi-star, 
+.rating-stars .bi-star-fill {
+    cursor: pointer;
+    margin-right: 2px;
+}
+
+.rating-stars .bi-star-fill {
+    color: #ffc107;
+}
+
+.rating-stars .bi-star:hover,
+.rating-stars .bi-star-fill:hover {
+    color: #ffb400;
+}
+
+/* Bootstrap icons */
+@import url("https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css"); 

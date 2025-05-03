@@ -30,6 +30,7 @@ class Traveler:
     """Represents a traveler with name and origin airport."""
     name: str
     origin: str  # IATA airport code
+    preferences: Dict[str, float] = field(default_factory=dict)  # Destination IATA -> preference score (1-5)
 
 
 @dataclass
@@ -294,8 +295,9 @@ def find_optimal_destinations(
     api_key: str,
     max_results_per_route: int = 1,
     mock_api: bool = True,
-    cost_weight: float = 0.8,
+    cost_weight: float = 0.6,
     emissions_weight: float = 0.2,
+    preference_weight: float = 0.2,
     max_workers: int = 5
 ) -> List[DestinationScore]:
     """
@@ -310,6 +312,7 @@ def find_optimal_destinations(
         mock_api: Whether to use mock API responses
         cost_weight: Weight for cost in scoring (0-1)
         emissions_weight: Weight for emissions in scoring (0-1)
+        preference_weight: Weight for traveler preferences in scoring (0-1)
         max_workers: Maximum number of concurrent API requests
         
     Returns:
@@ -335,7 +338,7 @@ def find_optimal_destinations(
     
     # Calculate scores for ranking
     scored_destinations = calculate_scores(
-        valid_destinations, cost_weight, emissions_weight
+        valid_destinations, cost_weight, emissions_weight, preference_weight
     )
     
     # Sort by score (lower is better)
@@ -428,21 +431,31 @@ def process_destination(
 def calculate_scores(
     destinations: List[DestinationScore],
     cost_weight: float,
-    emissions_weight: float
+    emissions_weight: float,
+    preference_weight: float
 ) -> List[DestinationScore]:
     """
-    Calculate scores for destinations based on cost and emissions.
+    Calculate scores for destinations based on cost, emissions, and traveler preferences.
     
     Args:
         destinations: List of DestinationScore objects
         cost_weight: Weight for cost in scoring (0-1)
         emissions_weight: Weight for emissions in scoring (0-1)
+        preference_weight: Weight for traveler preferences in scoring (0-1)
         
     Returns:
         Updated list of DestinationScore objects with scores
     """
     if not destinations:
         return []
+    
+    # Adjust weights to ensure they sum to 1
+    total_weight = cost_weight + emissions_weight + preference_weight
+    cost_weight = cost_weight / total_weight
+    emissions_weight = emissions_weight / total_weight
+    preference_weight = preference_weight / total_weight
+    
+    logger.info(f"Adjusted weights - Cost: {cost_weight:.2f}, Emissions: {emissions_weight:.2f}, Preference: {preference_weight:.2f}")
     
     # Find max and min values for normalization
     max_cost = max(d.total_cost for d in destinations)
@@ -464,9 +477,42 @@ def calculate_scores(
             norm_emissions = (destination.total_emissions - min_emissions) / (max_emissions - min_emissions)
         else:
             norm_emissions = 0
+            
+        # Calculate preference score (higher preference is better)
+        preference_scores = []
+        for plan in destination.flight_plans:
+            traveler = plan.traveler
+            dest_code = destination.destination_code
+            
+            # If the traveler has a preference for this destination, use it
+            if dest_code in traveler.preferences:
+                # Convert preference from 1-5 scale to 0-1 scale 
+                # (higher preference value = lower score which is better)
+                preference = 1 - ((traveler.preferences[dest_code] - 1) / 4)
+                preference_scores.append(preference)
+        
+        # If no preferences, use neutral score
+        # With preference, a high rating (5) should result in a low score (0)
+        # since lower scores are better
+        if preference_scores:
+            norm_preference = sum(preference_scores) / len(preference_scores)
+        else:
+            # No preferences specified, use neutral value
+            norm_preference = 0.5
         
         # Calculate weighted score (lower is better)
-        destination.score = (cost_weight * norm_cost) + (emissions_weight * norm_emissions)
+        weighted_score = (
+            (cost_weight * norm_cost) + 
+            (emissions_weight * norm_emissions) + 
+            (preference_weight * norm_preference)
+        )
+        
+        # Ensure score is between 0 and 1
+        destination.score = max(0, min(1, weighted_score))
+        
+        logger.info(f"Destination {destination.destination_code} scores - Cost: {norm_cost:.2f}, " +
+                   f"Emissions: {norm_emissions:.2f}, Preference: {norm_preference:.2f}, " +
+                   f"Final Score: {destination.score:.2f}")
     
     return destinations
 

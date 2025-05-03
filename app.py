@@ -21,15 +21,24 @@ def find_destinations():
         travelers_data = data.get('travelers', [])
         candidate_destinations = data.get('destinations', [])
         travel_date = data.get('travelDate')
-        cost_weight = float(data.get('costWeight', 0.7))
-        emissions_weight = float(data.get('emissionsWeight', 0.3))
+        cost_weight = float(data.get('costWeight', 0.6))
+        emissions_weight = float(data.get('emissionsWeight', 0.2))
+        preference_weight = float(data.get('preferenceWeight', 0.2))
         
         # Validate data
         if not travelers_data or not candidate_destinations or not travel_date:
             return jsonify({'error': 'Missing required data'}), 400
             
         # Create Traveler objects
-        travelers = [Traveler(t['name'], t['origin']) for t in travelers_data]
+        travelers = []
+        for t in travelers_data:
+            preferences = {}
+            # Convert preferences from the format {destination: rating}
+            if 'preferences' in t:
+                preferences = {dest: float(rating) for dest, rating in t.get('preferences', {}).items()}
+            
+            traveler = Traveler(t['name'], t['origin'], preferences)
+            travelers.append(traveler)
         
         # Find optimal destinations
         api_key = os.environ.get("SKYSCANNER_API_KEY", "your_api_key_here")
@@ -41,6 +50,7 @@ def find_destinations():
             mock_api=True,  # Always use mock data for the web app
             cost_weight=cost_weight,
             emissions_weight=emissions_weight,
+            preference_weight=preference_weight,
             max_results_per_route=1
         )
         

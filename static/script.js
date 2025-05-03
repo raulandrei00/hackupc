@@ -9,26 +9,30 @@ document.addEventListener('DOMContentLoaded', function() {
     // Initialize weight sliders
     const costWeightInput = document.getElementById('costWeight');
     const emissionsWeightInput = document.getElementById('emissionsWeight');
+    const preferenceWeightInput = document.getElementById('preferenceWeight');
     const costWeightValue = document.getElementById('costWeightValue');
     const emissionsWeightValue = document.getElementById('emissionsWeightValue');
+    const preferenceWeightValue = document.getElementById('preferenceWeightValue');
 
-    // Update weight display values
+    // Initial values
+    costWeightInput.value = 0.6;
+    emissionsWeightInput.value = 0.2;
+    preferenceWeightInput.value = 0.2;
+    costWeightValue.textContent = "0.6";
+    emissionsWeightValue.textContent = "0.2";
+    preferenceWeightValue.textContent = "0.2";
+
+    // Update weight display values independently
     costWeightInput.addEventListener('input', function() {
-        const costWeight = parseFloat(this.value);
-        const emissionsWeight = 1 - costWeight;
-        
-        costWeightValue.textContent = costWeight.toFixed(1);
-        emissionsWeightInput.value = emissionsWeight.toFixed(1);
-        emissionsWeightValue.textContent = emissionsWeight.toFixed(1);
+        costWeightValue.textContent = parseFloat(this.value).toFixed(1);
     });
 
     emissionsWeightInput.addEventListener('input', function() {
-        const emissionsWeight = parseFloat(this.value);
-        const costWeight = 1 - emissionsWeight;
-        
-        emissionsWeightValue.textContent = emissionsWeight.toFixed(1);
-        costWeightInput.value = costWeight.toFixed(1);
-        costWeightValue.textContent = costWeight.toFixed(1);
+        emissionsWeightValue.textContent = parseFloat(this.value).toFixed(1);
+    });
+    
+    preferenceWeightInput.addEventListener('input', function() {
+        preferenceWeightValue.textContent = parseFloat(this.value).toFixed(1);
     });
 
     // Load airport codes for dropdowns
@@ -97,6 +101,42 @@ document.addEventListener('DOMContentLoaded', function() {
                     alert('You need at least one traveler');
                 }
             }
+        }
+        
+        // Handle add preference button
+        if (e.target.classList.contains('add-preference-btn') || e.target.closest('.add-preference-btn')) {
+            const travelerEntry = e.target.closest('.traveler-entry');
+            addPreference(travelerEntry);
+        }
+        
+        // Handle remove preference button
+        if (e.target.classList.contains('remove-preference')) {
+            const preferenceEntry = e.target.closest('.preference-entry');
+            if (preferenceEntry) {
+                preferenceEntry.remove();
+            }
+        }
+        
+        // Handle rating stars
+        if (e.target.classList.contains('rating-star')) {
+            const rating = parseInt(e.target.dataset.rating);
+            const starsContainer = e.target.closest('.rating-stars');
+            const stars = starsContainer.querySelectorAll('.rating-star');
+            
+            // Update stars
+            stars.forEach(star => {
+                const starRating = parseInt(star.dataset.rating);
+                if (starRating <= rating) {
+                    star.classList.remove('bi-star');
+                    star.classList.add('bi-star-fill');
+                } else {
+                    star.classList.remove('bi-star-fill');
+                    star.classList.add('bi-star');
+                }
+            });
+            
+            // Store the rating value in a data attribute on the container
+            starsContainer.dataset.rating = rating;
         }
     });
 });
@@ -189,6 +229,7 @@ async function findDestinations() {
         
         const costWeight = parseFloat(document.getElementById('costWeight').value);
         const emissionsWeight = parseFloat(document.getElementById('emissionsWeight').value);
+        const preferenceWeight = parseFloat(document.getElementById('preferenceWeight').value);
         
         // Get travelers
         const travelers = [];
@@ -199,9 +240,24 @@ async function findDestinations() {
             const origin = travelerEl.querySelector('.traveler-origin').value;
             
             if (name && origin) {
+                // Get traveler preferences
+                const preferences = {};
+                const preferenceEntries = travelerEl.querySelectorAll('.preference-entry');
+                
+                preferenceEntries.forEach(entry => {
+                    const destCode = entry.querySelector('.preference-destination').value;
+                    const ratingStars = entry.querySelector('.rating-stars');
+                    const rating = parseInt(ratingStars.dataset.rating || '0');
+                    
+                    if (destCode && rating > 0) {
+                        preferences[destCode] = rating;
+                    }
+                });
+                
                 travelers.push({
                     name,
-                    origin
+                    origin,
+                    preferences
                 });
             }
         });
@@ -241,7 +297,8 @@ async function findDestinations() {
                 destinations,
                 travelDate,
                 costWeight,
-                emissionsWeight
+                emissionsWeight,
+                preferenceWeight
             })
         });
         
@@ -333,4 +390,24 @@ function displayResults(destinations) {
         
         destinationResults.appendChild(destNode);
     });
+}
+
+// Add preference to traveler
+async function addPreference(travelerEntry) {
+    const preferencesContainer = travelerEntry.querySelector('.preferences-list');
+    const template = document.getElementById('preferenceTemplate');
+    const preferenceNode = template.content.cloneNode(true);
+    
+    // Load destination options
+    const destSelect = preferenceNode.querySelector('.preference-destination');
+    const airports = await loadAirportCodes();
+    
+    airports.forEach(airport => {
+        const option = document.createElement('option');
+        option.value = airport.code;
+        option.textContent = `${airport.code} - ${airport.name}`;
+        destSelect.appendChild(option);
+    });
+    
+    preferencesContainer.appendChild(preferenceNode);
 } 
