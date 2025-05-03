@@ -48,6 +48,7 @@ def chat_api():
         preference_weight = preferences.get('preferenceWeight', 0.2)
         travelers = preferences.get('travelers', [])
         destinations = preferences.get('destinations', [])
+        general_preferences = preferences.get('generalPreferences', [])
         
         # Format traveler information with preferences
         traveler_info = ""
@@ -64,6 +65,15 @@ def chat_api():
                 traveler_info += ", ".join(preferences)
             traveler_info += "\n"
         
+        # Format general preferences
+        general_pref_info = ""
+        if general_preferences:
+            general_pref_info = "GENERAL PREFERENCES:\n"
+            for pref in general_preferences:
+                pref_type = pref.get('type', '').replace('_', ' ').title()
+                pref_value = pref.get('value', '')
+                general_pref_info += f"- {pref_type}: {pref_value}\n"
+        
         # Format destination options
         destination_info = ", ".join(destinations) if destinations else "Not specified"
 
@@ -79,6 +89,8 @@ CURRENT TRAVEL PLAN:
 
 TRAVELERS ({len(travelers)}):
 {traveler_info}
+
+{general_pref_info}
 
 DESTINATION OPTIONS:
 {destination_info}
@@ -160,10 +172,49 @@ When you've made your choice, you can use the "Find Best Destinations" button to
             
             destination_recommendations[airport] = rating
         
+        # Also extract general preferences from the response
+        general_preference_suggestions = []
+        
+        # Look for airline suggestions
+        airline_patterns = [
+            r'fly with ([A-Z][a-z]+ ?[A-Z]?[a-z]*)',
+            r'([A-Z][a-z]+ ?[A-Z]?[a-z]*) Airlines?',
+            r'carrier like ([A-Z][a-z]+ ?[A-Z]?[a-z]*)'
+        ]
+        
+        for pattern in airline_patterns:
+            airlines = re.findall(pattern, assistant_message)
+            for airline in airlines:
+                if airline and len(airline) > 3:  # Avoid short matches
+                    general_preference_suggestions.append({
+                        'type': 'airline',
+                        'value': airline.strip()
+                    })
+        
+        # Look for time suggestions
+        time_patterns = [
+            r'morning flight',
+            r'evening departure',
+            r'afternoon arrival',
+            r'night flight',
+            r'early departure',
+            r'late arrival'
+        ]
+        
+        for pattern in time_patterns:
+            if re.search(pattern, assistant_message.lower()):
+                time_type = 'departure_time' if 'departure' in pattern or pattern.startswith('early') else 'arrival_time'
+                time_value = pattern.replace('flight', '').replace('departure', '').replace('arrival', '').strip()
+                general_preference_suggestions.append({
+                    'type': time_type,
+                    'value': time_value
+                })
+        
         return jsonify({
             'status': 'success',
             'message': assistant_message,
-            'destination_recommendations': destination_recommendations
+            'destination_recommendations': destination_recommendations,
+            'general_preference_suggestions': general_preference_suggestions
         })
 
     except Exception as e:
@@ -182,6 +233,7 @@ def find_destinations():
         cost_weight = float(data.get('costWeight', 0.6))
         emissions_weight = float(data.get('emissionsWeight', 0.2))
         preference_weight = float(data.get('preferenceWeight', 0.2))
+        general_preferences = data.get('generalPreferences', [])
         
         # Validate data
         if not travelers_data or not candidate_destinations or not travel_date:

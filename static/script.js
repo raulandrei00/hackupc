@@ -82,6 +82,11 @@ document.addEventListener('DOMContentLoaded', function() {
         addTraveler();
     });
 
+    // Add general preference button event
+    document.getElementById('addGeneralPrefBtn').addEventListener('click', function() {
+        addGeneralPreference();
+    });
+
     // Form submission
     document.getElementById('plannerForm').addEventListener('submit', function(e) {
         e.preventDefault();
@@ -137,6 +142,17 @@ document.addEventListener('DOMContentLoaded', function() {
             
             // Store the rating value in a data attribute on the container
             starsContainer.dataset.rating = rating;
+        }
+    });
+    
+    // Event delegation for general preferences
+    document.getElementById('generalPreferencesContainer').addEventListener('click', function(e) {
+        // Handle remove general preference button
+        if (e.target.classList.contains('remove-general-pref') || e.target.closest('.remove-general-pref')) {
+            const prefItem = e.target.closest('.general-preference-item');
+            if (prefItem) {
+                prefItem.remove();
+            }
         }
     });
     
@@ -202,6 +218,11 @@ function initializeChat() {
                 // Process destination preference recommendations if available
                 if (data.destination_recommendations && Object.keys(data.destination_recommendations).length > 0) {
                     displayDestinationRecommendations(data.destination_recommendations);
+                }
+                
+                // Process general preference suggestions if available
+                if (data.general_preference_suggestions && data.general_preference_suggestions.length > 0) {
+                    displayGeneralPreferenceSuggestions(data.general_preference_suggestions);
                 }
                 
                 // Refresh destination results to incorporate any new preferences
@@ -273,13 +294,29 @@ function initializeChat() {
             destinations.push(checkbox.value);
         });
         
+        // Get general preferences
+        const generalPreferences = [];
+        const generalPrefItems = document.querySelectorAll('.general-preference-item');
+        generalPrefItems.forEach(item => {
+            const type = item.querySelector('.preference-type').value;
+            const value = item.querySelector('.preference-value').value;
+            
+            if (value.trim()) {
+                generalPreferences.push({
+                    type: type,
+                    value: value.trim()
+                });
+            }
+        });
+        
         return {
             travelDate: travelDate,
             costWeight: costWeight,
             emissionsWeight: emissionsWeight,
             preferenceWeight: preferenceWeight,
             travelers: travelers,
-            destinations: destinations
+            destinations: destinations,
+            generalPreferences: generalPreferences
         };
     }
     
@@ -470,6 +507,108 @@ function initializeChat() {
                     }
                 });
             }
+        }
+    }
+    
+    // Display general preference suggestions from AI
+    function displayGeneralPreferenceSuggestions(suggestions) {
+        // Create or get the suggestions container
+        let suggestionsDiv = document.getElementById('aiGeneralPreferenceSuggestions');
+        if (!suggestionsDiv) {
+            suggestionsDiv = document.createElement('div');
+            suggestionsDiv.id = 'aiGeneralPreferenceSuggestions';
+            suggestionsDiv.className = 'mt-3 p-3 border rounded bg-light';
+            
+            // Insert it after the preferences recommendations or chat messages
+            const prefRecommendations = document.getElementById('aiPreferenceRecommendations');
+            if (prefRecommendations) {
+                prefRecommendations.parentNode.insertBefore(suggestionsDiv, prefRecommendations.nextSibling);
+            } else {
+                const chatMessages = document.getElementById('chatMessages');
+                chatMessages.parentNode.insertBefore(suggestionsDiv, chatMessages.nextSibling);
+            }
+        }
+        
+        // Clear previous suggestions
+        suggestionsDiv.innerHTML = '';
+        
+        // Add header
+        const header = document.createElement('h5');
+        header.textContent = 'AI General Preference Suggestions';
+        suggestionsDiv.appendChild(header);
+        
+        // Add description
+        const description = document.createElement('p');
+        description.textContent = 'The AI suggests these general preferences based on your conversation:';
+        description.className = 'small text-muted';
+        suggestionsDiv.appendChild(description);
+        
+        // Create a container for suggestions
+        const suggestionsContainer = document.createElement('div');
+        suggestionsContainer.className = 'suggestions-container';
+        suggestionsDiv.appendChild(suggestionsContainer);
+        
+        // Add each general preference suggestion
+        suggestions.forEach(suggestion => {
+            const sugDiv = document.createElement('div');
+            sugDiv.className = 'recommendation-item d-flex align-items-center mb-2 p-2 border-bottom';
+            
+            // Suggestion info
+            const suggestionInfo = document.createElement('div');
+            suggestionInfo.className = 'flex-grow-1';
+            
+            // Format the type name for display
+            const typeName = suggestion.type.replace('_', ' ').charAt(0).toUpperCase() + suggestion.type.replace('_', ' ').slice(1);
+            suggestionInfo.innerHTML = `<strong>${typeName}</strong>: ${suggestion.value}`;
+            sugDiv.appendChild(suggestionInfo);
+            
+            // Add to general preferences button
+            const addButton = document.createElement('button');
+            addButton.className = 'btn btn-sm btn-outline-success ms-2';
+            addButton.textContent = 'Add to General Preferences';
+            addButton.dataset.type = suggestion.type;
+            addButton.dataset.value = suggestion.value;
+            
+            addButton.addEventListener('click', function() {
+                addToGeneralPreferences(this.dataset.type, this.dataset.value);
+                this.className = 'btn btn-sm btn-success ms-2';
+                this.textContent = 'Added';
+                this.disabled = true;
+            });
+            
+            sugDiv.appendChild(addButton);
+            suggestionsContainer.appendChild(sugDiv);
+        });
+        
+        // Add a reject all button
+        const rejectButton = document.createElement('button');
+        rejectButton.className = 'btn btn-sm btn-outline-danger mt-2';
+        rejectButton.textContent = 'Dismiss All Suggestions';
+        rejectButton.addEventListener('click', function() {
+            suggestionsDiv.remove();
+        });
+        suggestionsDiv.appendChild(rejectButton);
+    }
+    
+    // Add suggestion to general preferences
+    function addToGeneralPreferences(type, value) {
+        // Add a new general preference with the suggested values
+        addGeneralPreference();
+        
+        // Get the newly added preference (last one)
+        const prefItems = document.querySelectorAll('.general-preference-item');
+        const lastItem = prefItems[prefItems.length - 1];
+        
+        if (lastItem) {
+            const typeSelect = lastItem.querySelector('.preference-type');
+            const valueInput = lastItem.querySelector('.preference-value');
+            
+            // Set the values
+            typeSelect.value = type;
+            valueInput.value = value;
+            
+            // Trigger change to update placeholders
+            typeSelect.dispatchEvent(new Event('change'));
         }
     }
 }
@@ -723,6 +862,52 @@ function displayResults(destinations) {
         
         destinationResults.appendChild(destNode);
     });
+}
+
+// Add a general preference to the form
+function addGeneralPreference() {
+    const preferencesContainer = document.getElementById('generalPreferencesList');
+    const template = document.getElementById('generalPreferenceTemplate');
+    const preferenceNode = template.content.cloneNode(true);
+    
+    // Add special handlers for different preference types
+    const typeSelect = preferenceNode.querySelector('.preference-type');
+    const valueInput = preferenceNode.querySelector('.preference-value');
+    
+    // Update placeholder based on selected type
+    typeSelect.addEventListener('change', function() {
+        switch(this.value) {
+            case 'airline':
+                valueInput.placeholder = 'Preferred airline (e.g., Delta, American)';
+                valueInput.type = 'text';
+                break;
+            case 'max_price':
+                valueInput.placeholder = 'Maximum price in USD';
+                valueInput.type = 'number';
+                break;
+            case 'departure_time':
+                valueInput.placeholder = 'Preferred time range (e.g., 9AM-2PM)';
+                valueInput.type = 'text';
+                break;
+            case 'arrival_time':
+                valueInput.placeholder = 'Preferred time range (e.g., 3PM-8PM)';
+                valueInput.type = 'text';
+                break;
+            case 'layovers':
+                valueInput.placeholder = 'Maximum number of layovers';
+                valueInput.type = 'number';
+                break;
+            case 'travel_class':
+                valueInput.placeholder = 'Class (Economy, Business, First)';
+                valueInput.type = 'text';
+                break;
+        }
+    });
+    
+    // Set initial placeholder
+    typeSelect.dispatchEvent(new Event('change'));
+    
+    preferencesContainer.appendChild(preferenceNode);
 }
 
 // Add preference to traveler

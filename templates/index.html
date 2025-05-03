@@ -101,6 +101,18 @@
                                     </div>
                                 </div>
                             </div>
+                            
+                            <!-- General Preferences Section -->
+                            <div class="mb-3">
+                                <label class="form-label">General Preferences</label>
+                                <div id="generalPreferencesContainer" class="border rounded p-3">
+                                    <div class="form-text mb-2">Add general preferences that apply to everyone</div>
+                                    <div id="generalPreferencesList"></div>
+                                    <button type="button" id="addGeneralPrefBtn" class="btn btn-sm btn-outline-secondary mt-2">
+                                        <i class="bi bi-plus"></i> Add General Preference
+                                    </button>
+                                </div>
+                            </div>
 
                             <div class="mb-3">
                                 <label class="form-label">Travelers</label>
@@ -293,6 +305,28 @@
                         <div class="flight-emissions text-muted mt-2 small"></div>
                     </div>
                 </div>
+            </div>
+        </div>
+    </template>
+    
+    <!-- General Preference template -->
+    <template id="generalPreferenceTemplate">
+        <div class="general-preference-item mb-2">
+            <div class="input-group">
+                <div class="input-group-text">
+                    <select class="form-select form-select-sm preference-type" style="width: 120px; min-width: 120px;">
+                        <option value="airline">Airline</option>
+                        <option value="max_price">Max Price</option>
+                        <option value="departure_time">Departure Time</option>
+                        <option value="arrival_time">Arrival Time</option>
+                        <option value="layovers">Max Layovers</option>
+                        <option value="travel_class">Travel Class</option>
+                    </select>
+                </div>
+                <input type="text" class="form-control preference-value" placeholder="Preference value">
+                <button class="btn btn-outline-danger remove-general-pref" type="button">
+                    <i class="bi bi-x"></i>
+                </button>
             </div>
         </div>
     </template>
