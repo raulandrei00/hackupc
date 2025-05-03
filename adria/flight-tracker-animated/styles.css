@@ -1,0 +1,641 @@
+/* Modern Theme Variables */
+:root {
+    --primary-gradient: linear-gradient(135deg, #23406e, #2d3e50);
+    --secondary-gradient: linear-gradient(135deg, #f9a825, #ffb300);
+    --accent-color: #f9a825;
+    --background-light: #fff8e1;
+    --text-dark: #23406e;
+    --text-light: #fff8e1;
+    --success-color: #8bc34a;
+    --error-color: #e65100;
+    --warning-color: #ffb300;
+    --border-radius: 12px;
+    --box-shadow: 0 4px 6px -1px rgba(44, 62, 80, 0.15), 0 2px 4px -2px rgba(44, 62, 80, 0.10);
+    --transition-speed: 0.3s;
+}
+
+/* Base styles with animations */
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background: url('./background.png') no-repeat center center fixed;
+    background-size: cover;
+    background-position: center center;
+    background-repeat: no-repeat;
+    min-height: 100vh;
+    color: var(--text-dark);
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    transition: background-color var(--transition-speed);
+    position: relative;
+}
+
+body::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: 
+        radial-gradient(circle at 20% 20%, rgba(255, 255, 255, 0.1) 0%, transparent 50%),
+        radial-gradient(circle at 80% 80%, rgba(255, 255, 255, 0.1) 0%, transparent 50%);
+    z-index: -1;
+}
+
+/* Navbar with gradient and animation */
+.navbar {
+    background: rgba(26, 35, 126, 0.95);
+    padding: 1rem 0;
+    box-shadow: var(--box-shadow);
+    transition: all var(--transition-speed);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    position: relative;
+    z-index: 2;
+}
+
+.navbar-brand {
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: var(--text-light) !important;
+    transition: transform var(--transition-speed);
+}
+
+.navbar-brand:hover {
+    transform: scale(1.05);
+}
+
+.navbar .btn {
+    padding: 0.5rem 1rem;
+    font-weight: 500;
+    transition: all var(--transition-speed);
+}
+
+.navbar .btn:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--box-shadow);
+}
+
+/* Main container with animations */
+.main-container {
+    padding: 2rem 0;
+    flex: 1;
+    opacity: 0;
+    animation: fadeIn 1s ease-in forwards;
+    background: #fff8e1 !important;
+    color: #23406e;
+    box-shadow: var(--box-shadow);
+    border-radius: var(--border-radius);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    margin: 1rem;
+    position: relative;
+    z-index: 1;
+}
+
+/* Welcome card with gradient and animation */
+.welcome-card {
+    background: #fff8e1 !important;
+    color: #23406e;
+    padding: 2rem;
+    border-radius: var(--border-radius);
+    margin-bottom: 2rem;
+    box-shadow: var(--box-shadow);
+    transition: transform var(--transition-speed);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+}
+
+.welcome-card:hover {
+    transform: translateY(-5px);
+}
+
+.welcome-card h1 {
+    font-size: 2.5rem;
+    font-weight: 700;
+    margin-bottom: 1rem;
+    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.welcome-card .lead {
+    font-size: 1.25rem;
+    opacity: 0.9;
+}
+
+/* Search and filter cards with animations */
+.search-card, .filter-card {
+    background: #fff8e1 !important;
+    color: #23406e;
+    padding: 1.5rem;
+    border-radius: var(--border-radius);
+    box-shadow: var(--box-shadow);
+    margin-bottom: 1rem;
+    transition: all var(--transition-speed);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+}
+
+.search-card:hover, .filter-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 6px 12px rgba(0, 0, 0, 0.1);
+}
+
+/* Form controls with animations */
+.form-control {
+    border: 2px solid #e2e8f0;
+    border-radius: var(--border-radius);
+    padding: 0.75rem;
+    transition: all var(--transition-speed);
+}
+
+.form-control:focus {
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
+    transform: translateY(-1px);
+}
+
+/* Buttons with animations */
+.btn {
+    padding: 0.75rem 1.5rem;
+    font-weight: 500;
+    border-radius: var(--border-radius);
+    transition: all var(--transition-speed);
+}
+
+.btn:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--box-shadow);
+}
+
+.btn-primary {
+    background: var(--secondary-gradient);
+    color: #23406e;
+    border: none;
+}
+
+.btn-primary:hover {
+    background: var(--primary-gradient);
+    color: #fff8e1;
+}
+
+.btn-outline-primary {
+    color: #f9a825;
+    border-color: #f9a825;
+}
+
+.btn-outline-primary:hover {
+    background: var(--secondary-gradient);
+    color: #23406e;
+    border-color: #f9a825;
+}
+
+/* API info card with animations */
+.api-info-card {
+    background: #fff8e1 !important;
+    color: #23406e;
+    border-radius: var(--border-radius);
+    box-shadow: var(--box-shadow);
+    margin-bottom: 1rem;
+    transition: all var(--transition-speed);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+}
+
+.api-info-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 6px 12px rgba(0, 0, 0, 0.1);
+}
+
+.api-info-card .card-header {
+    background: var(--primary-gradient);
+    color: var(--text-light);
+    border-radius: var(--border-radius) var(--border-radius) 0 0;
+    padding: 1rem 1.5rem;
+    font-weight: 600;
+}
+
+.info-item {
+    padding: 1rem;
+    border-radius: var(--border-radius);
+    background-color: var(--background-light);
+    margin-bottom: 1rem;
+    transition: all var(--transition-speed);
+}
+
+.info-item:hover {
+    transform: translateX(5px);
+    background-color: #f1f5f9;
+}
+
+.info-item i {
+    color: var(--accent-color);
+}
+
+/* Loading animation */
+.loading-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+}
+
+.spinner-border {
+    width: 3rem;
+    height: 3rem;
+    color: var(--accent-color);
+    animation: spin 1s linear infinite;
+}
+
+/* Flight card with animations */
+.flight-card {
+    background: #fff8e1 !important;
+    color: #23406e;
+    padding: 1.5rem;
+    border-radius: var(--border-radius);
+    box-shadow: var(--box-shadow);
+    margin-bottom: 1rem;
+    transition: all var(--transition-speed);
+    position: relative;
+    overflow: hidden;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+}
+
+.flight-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 4px;
+    background: linear-gradient(90deg, #1a237e, #0d47a1);
+    transform: scaleX(0);
+    transform-origin: left;
+    transition: transform var(--transition-speed);
+}
+
+.flight-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.1);
+}
+
+.flight-card:hover::before {
+    transform: scaleX(1);
+}
+
+.flight-card p {
+    margin-bottom: 0.5rem;
+}
+
+.flight-card strong {
+    color: var(--accent-color);
+}
+
+/* Alert animations */
+.alert {
+    border: none;
+    border-radius: var(--border-radius);
+    padding: 1rem;
+    margin-bottom: 1rem;
+    box-shadow: var(--box-shadow);
+    animation: slideIn 0.3s ease-out;
+    background-color: var(--background-light);
+    backdrop-filter: blur(10px);
+}
+
+.alert-success {
+    background-color: rgba(0, 200, 83, 0.1);
+    color: var(--success-color);
+    border-left: 4px solid var(--success-color);
+}
+
+.alert-danger {
+    background-color: rgba(213, 0, 0, 0.1);
+    color: var(--error-color);
+    border-left: 4px solid var(--error-color);
+}
+
+.alert-warning {
+    background-color: rgba(255, 109, 0, 0.1);
+    color: var(--warning-color);
+    border-left: 4px solid var(--warning-color);
+}
+
+/* Footer with gradient */
+.footer {
+    background: rgba(26, 35, 126, 0.95);
+    color: var(--text-light);
+    padding: 1.5rem 0;
+    margin-top: auto;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    position: relative;
+    z-index: 2;
+}
+
+/* Custom animations */
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes slideIn {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+@keyframes spin {
+    from {
+        transform: rotate(0deg);
+    }
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* Modal animations */
+.modal-content {
+    background-color: white;
+    border: none;
+    border-radius: var(--border-radius);
+    box-shadow: var(--box-shadow);
+}
+
+.modal-header {
+    background: var(--primary-gradient);
+    color: white;
+    border-bottom: none;
+    border-radius: var(--border-radius) var(--border-radius) 0 0;
+    padding: 1.5rem;
+}
+
+.modal-title {
+    color: white;
+    font-weight: 600;
+}
+
+.modal-body {
+    padding: 1.5rem;
+    background-color: white;
+}
+
+.modal-footer {
+    border-top: 1px solid rgba(0, 0, 0, 0.1);
+    padding: 1.5rem;
+    background-color: white;
+}
+
+/* Form styles with improved contrast */
+.form-label {
+    color: #1a1a1a;
+    font-weight: 500;
+    margin-bottom: 0.5rem;
+}
+
+.form-control {
+    background-color: white;
+    border: 2px solid #e2e8f0;
+    color: #1a1a1a;
+    padding: 0.75rem;
+    border-radius: var(--border-radius);
+    transition: all var(--transition-speed);
+}
+
+.form-control:focus {
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
+    background-color: white;
+    color: #1a1a1a;
+}
+
+.form-control::placeholder {
+    color: #666;
+}
+
+.form-text {
+    color: #4a5568;
+    font-size: 0.875rem;
+    margin-top: 0.5rem;
+}
+
+/* Dark mode support for modals */
+@media (prefers-color-scheme: dark) {
+    .modal-content {
+        background-color: #1e293b;
+    }
+
+    .modal-body, .modal-footer {
+        background-color: #1e293b;
+    }
+
+    .form-label {
+        color: #e2e8f0;
+    }
+
+    .form-control {
+        background-color: #334155;
+        border-color: #475569;
+        color: #e2e8f0;
+    }
+
+    .form-control:focus {
+        background-color: #334155;
+        color: #e2e8f0;
+    }
+
+    .form-control::placeholder {
+        color: #94a3b8;
+    }
+
+    .form-text {
+        color: #94a3b8;
+    }
+
+    .modal-footer {
+        border-top-color: #475569;
+    }
+}
+
+/* Dropdown animations */
+.dropdown-menu {
+    border: none;
+    border-radius: var(--border-radius);
+    box-shadow: var(--box-shadow);
+    padding: 0.5rem;
+    animation: dropdownFadeIn 0.2s ease-out;
+}
+
+@keyframes dropdownFadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.dropdown-item {
+    padding: 0.75rem 1rem;
+    border-radius: var(--border-radius);
+    transition: all var(--transition-speed);
+}
+
+.dropdown-item:hover {
+    background-color: var(--background-light);
+    transform: translateX(5px);
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+    .navbar-brand {
+        font-size: 1.25rem;
+    }
+
+    .btn {
+        padding: 0.5rem 1rem;
+    }
+
+    .modal-dialog {
+        margin: 0.5rem;
+    }
+
+    .welcome-card h1 {
+        font-size: 2rem;
+    }
+}
+
+/* Dark mode support */
+@media (prefers-color-scheme: dark) {
+    :root {
+        --background-light: #2d3e50;
+        --text-dark: #fff8e1;
+    }
+
+    body {
+        background-color: var(--background-light);
+        color: var(--text-light);
+    }
+
+    .main-container,
+    .search-card,
+    .filter-card,
+    .flight-card,
+    .api-info-card,
+    .welcome-card {
+        background: #2d3e50 !important;
+        color: #fff8e1;
+    }
+
+    .form-control {
+        background-color: rgba(71, 85, 105, 0.9);
+        border-color: #64748b;
+        color: var(--text-light);
+    }
+
+    .form-control:focus {
+        background-color: rgba(71, 85, 105, 0.9);
+        color: var(--text-light);
+    }
+
+    .info-item {
+        background-color: #475569;
+    }
+
+    .info-item:hover {
+        background-color: #526480;
+    }
+
+    .btn-primary {
+        background: var(--primary-gradient);
+        color: #fff8e1;
+    }
+
+    .btn-primary:hover {
+        background: var(--secondary-gradient);
+        color: #23406e;
+    }
+
+    .btn-outline-primary {
+        color: #ffb300;
+        border-color: #ffb300;
+    }
+
+    .btn-outline-primary:hover {
+        background: var(--secondary-gradient);
+        color: #2d3e50;
+        border-color: #ffb300;
+    }
+
+    .flight-card strong,
+    .api-info-card .card-header {
+        color: #ffb300;
+    }
+}
+
+.flight-times {
+    background-color: rgba(0, 0, 0, 0.03);
+    padding: 1rem;
+    border-radius: var(--border-radius);
+    margin: 1rem 0;
+}
+
+.flight-times p {
+    margin-bottom: 0.5rem;
+}
+
+.flight-times p:last-child {
+    margin-bottom: 0;
+}
+
+.flight-times strong {
+    color: var(--accent-color);
+    min-width: 80px;
+    display: inline-block;
+}
+
+.flight-card.past-departure {
+    background: #ffeaea !important; /* Light red background for light mode */
+    border-left: 5px solid #b71c1c;
+    color: #b71c1c !important;
+}
+
+.flight-card.past-departure .flight-times {
+    background: #ffd6d6 !important;
+}
+
+.flight-card.past-departure p,
+.flight-card.past-departure strong {
+    color: #b71c1c !important;
+}
+
+@media (prefers-color-scheme: dark) {
+    .flight-card.past-departure {
+        background: #3a1a1a !important; /* Dark red background for dark mode */
+        border-left: 5px solid #ff5252;
+        color: #ff5252 !important;
+    }
+    .flight-card.past-departure .flight-times {
+        background: #4d2323 !important;
+    }
+    .flight-card.past-departure p,
+    .flight-card.past-departure strong {
+        color: #ff5252 !important;
+    }
+} 
