@@ -198,6 +198,14 @@ function initializeChat() {
                 
                 // Check for destination suggestions in the response
                 checkForDestinationSuggestions(data.message);
+                
+                // Process destination preference recommendations if available
+                if (data.destination_recommendations && Object.keys(data.destination_recommendations).length > 0) {
+                    displayDestinationRecommendations(data.destination_recommendations);
+                }
+                
+                // Refresh destination results to incorporate any new preferences
+                findDestinations();
             } else if (data.error) {
                 addChatMessage('Error: ' + data.error, 'bot');
             }
@@ -227,7 +235,7 @@ function initializeChat() {
         const emissionsWeight = parseFloat(document.getElementById('emissionsWeight').value);
         const preferenceWeight = parseFloat(document.getElementById('preferenceWeight').value);
         
-        // Get traveler information
+        // Get traveler information with preferences
         const travelers = [];
         const travelerElements = document.querySelectorAll('.traveler-entry');
         
@@ -236,9 +244,24 @@ function initializeChat() {
             const origin = travelerEl.querySelector('.traveler-origin').value;
             
             if (name && origin) {
+                // Get traveler preferences
+                const preferences = {};
+                const preferenceEntries = travelerEl.querySelectorAll('.preference-entry');
+                
+                preferenceEntries.forEach(entry => {
+                    const destCode = entry.querySelector('.preference-destination').value;
+                    const ratingStars = entry.querySelector('.rating-stars');
+                    const rating = parseInt(ratingStars.dataset.rating || '0');
+                    
+                    if (destCode && rating > 0) {
+                        preferences[destCode] = rating;
+                    }
+                });
+                
                 travelers.push({
                     name: name,
-                    origin: origin
+                    origin: origin,
+                    preferences: preferences
                 });
             }
         });
@@ -298,6 +321,155 @@ function initializeChat() {
                 
                 suggestionsContent.appendChild(button);
             });
+        }
+    }
+    
+    // Display destination preference recommendations from AI
+    function displayDestinationRecommendations(recommendations) {
+        // Create or get the recommendations container
+        let recommendationsDiv = document.getElementById('aiPreferenceRecommendations');
+        if (!recommendationsDiv) {
+            recommendationsDiv = document.createElement('div');
+            recommendationsDiv.id = 'aiPreferenceRecommendations';
+            recommendationsDiv.className = 'mt-3 p-3 border rounded bg-light';
+            
+            // Insert it after the chat messages container
+            const chatMessages = document.getElementById('chatMessages');
+            chatMessages.parentNode.insertBefore(recommendationsDiv, chatMessages.nextSibling);
+        }
+        
+        // Clear previous recommendations
+        recommendationsDiv.innerHTML = '';
+        
+        // Add header
+        const header = document.createElement('h5');
+        header.textContent = 'AI Destination Preference Recommendations';
+        recommendationsDiv.appendChild(header);
+        
+        // Add description
+        const description = document.createElement('p');
+        description.textContent = 'The AI recommends these destination preferences based on your conversation:';
+        description.className = 'small text-muted';
+        recommendationsDiv.appendChild(description);
+        
+        // Create a container for recommendations
+        const recommendationsContainer = document.createElement('div');
+        recommendationsContainer.className = 'recommendations-container';
+        recommendationsDiv.appendChild(recommendationsContainer);
+        
+        // Add a recommendation for each airport
+        for (const [airport, rating] of Object.entries(recommendations)) {
+            const recDiv = document.createElement('div');
+            recDiv.className = 'recommendation-item d-flex align-items-center mb-2 p-2 border-bottom';
+            
+            // Airport code and rating
+            const airportInfo = document.createElement('div');
+            airportInfo.className = 'flex-grow-1';
+            airportInfo.innerHTML = `<strong>${airport}</strong> - Rating: ${rating}/5`;
+            recDiv.appendChild(airportInfo);
+            
+            // Create buttons to add to travelers
+            const travelerElements = document.querySelectorAll('.traveler-entry');
+            travelerElements.forEach((travelerEl, index) => {
+                const travelerName = travelerEl.querySelector('.traveler-name').value;
+                if (travelerName) {
+                    const addButton = document.createElement('button');
+                    addButton.className = 'btn btn-sm btn-outline-success ms-2';
+                    addButton.textContent = `Add to ${travelerName}`;
+                    addButton.dataset.airport = airport;
+                    addButton.dataset.rating = rating;
+                    addButton.dataset.travelerIndex = index;
+                    
+                    addButton.addEventListener('click', function() {
+                        addPreferenceToTraveler(this.dataset.travelerIndex, this.dataset.airport, this.dataset.rating);
+                        this.className = 'btn btn-sm btn-success ms-2';
+                        this.textContent = `Added to ${travelerName}`;
+                        this.disabled = true;
+                    });
+                    
+                    recDiv.appendChild(addButton);
+                }
+            });
+            
+            recommendationsContainer.appendChild(recDiv);
+        }
+        
+        // Add a reject all button
+        const rejectButton = document.createElement('button');
+        rejectButton.className = 'btn btn-sm btn-outline-danger mt-2';
+        rejectButton.textContent = 'Dismiss All Recommendations';
+        rejectButton.addEventListener('click', function() {
+            recommendationsDiv.remove();
+        });
+        recommendationsDiv.appendChild(rejectButton);
+    }
+    
+    // Add a recommendation as a preference to a specific traveler
+    function addPreferenceToTraveler(travelerIndex, airport, rating) {
+        const travelerElements = document.querySelectorAll('.traveler-entry');
+        const travelerEl = travelerElements[travelerIndex];
+        
+        if (travelerEl) {
+            // Add a new preference to this traveler
+            const preferencesContainer = travelerEl.querySelector('.preferences-list');
+            
+            // First check if there's already a preference for this airport
+            const existingPrefEntries = travelerEl.querySelectorAll('.preference-entry');
+            let preferenceExists = false;
+            
+            existingPrefEntries.forEach(entry => {
+                const destSelect = entry.querySelector('.preference-destination');
+                if (destSelect && destSelect.value === airport) {
+                    // Update the existing preference rating
+                    const ratingStars = entry.querySelector('.rating-stars');
+                    const stars = ratingStars.querySelectorAll('.rating-star');
+                    
+                    // Update stars
+                    stars.forEach(star => {
+                        const starRating = parseInt(star.dataset.rating);
+                        if (starRating <= rating) {
+                            star.classList.remove('bi-star');
+                            star.classList.add('bi-star-fill');
+                        } else {
+                            star.classList.remove('bi-star-fill');
+                            star.classList.add('bi-star');
+                        }
+                    });
+                    
+                    // Store the rating value
+                    ratingStars.dataset.rating = rating;
+                    preferenceExists = true;
+                }
+            });
+            
+            // If the preference doesn't exist yet, create a new one
+            if (!preferenceExists) {
+                addPreference(travelerEl).then(() => {
+                    // Get the newly added preference entry (it's the last one)
+                    const newPrefEntry = travelerEl.querySelector('.preferences-list .preference-entry:last-child');
+                    if (newPrefEntry) {
+                        // Set the destination
+                        const destSelect = newPrefEntry.querySelector('.preference-destination');
+                        destSelect.value = airport;
+                        
+                        // Set the rating
+                        const ratingStars = newPrefEntry.querySelector('.rating-stars');
+                        const stars = ratingStars.querySelectorAll('.rating-star');
+                        
+                        // Update stars
+                        stars.forEach(star => {
+                            const starRating = parseInt(star.dataset.rating);
+                            if (starRating <= rating) {
+                                star.classList.remove('bi-star');
+                                star.classList.add('bi-star-fill');
+                            }
+                        });
+                        
+                        // Store the rating value
+                        ratingStars.dataset.rating = rating;
+                    }
+                });
+            }
         }
     }
 }

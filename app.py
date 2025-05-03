@@ -5,6 +5,7 @@ from datetime import datetime
 from travel_planner import Traveler, find_optimal_destinations, print_destinations
 import google.generativeai as genai
 from dotenv import load_dotenv
+import re
 
 # Try to load environment variables
 try:
@@ -48,10 +49,20 @@ def chat_api():
         travelers = preferences.get('travelers', [])
         destinations = preferences.get('destinations', [])
         
-        # Format traveler information
+        # Format traveler information with preferences
         traveler_info = ""
         for i, traveler in enumerate(travelers):
-            traveler_info += f"{i+1}. {traveler.get('name', 'Unknown')} from {traveler.get('origin', 'Unknown')}\n"
+            # Basic info
+            traveler_info += f"{i+1}. {traveler.get('name', 'Unknown')} from {traveler.get('origin', 'Unknown')}"
+            
+            # Add destination preferences if available
+            if 'preferences' in traveler and traveler['preferences']:
+                traveler_info += " - Destination preferences: "
+                preferences = []
+                for dest, rating in traveler['preferences'].items():
+                    preferences.append(f"{dest} (rating: {rating}/5)")
+                traveler_info += ", ".join(preferences)
+            traveler_info += "\n"
         
         # Format destination options
         destination_info = ", ".join(destinations) if destinations else "Not specified"
@@ -64,7 +75,7 @@ CURRENT TRAVEL PLAN:
 - Importance Weights:
   * Cost: {cost_weight} (higher means cost is more important)
   * Emissions: {emissions_weight} (higher means environmental impact is more important)
-  * Personal Preferences: {preference_weight} (higher means individual preferences matter more)
+  * Destination Preferences: {preference_weight} (higher means travelers' destination ratings matter more)
 
 TRAVELERS ({len(travelers)}):
 {traveler_info}
@@ -79,9 +90,10 @@ Provide helpful travel advice based on this information. If you suggest specific
 
 Remember:
 1. Consider the origins of all travelers when making recommendations
-2. Be specific and personalized in your advice
-3. If appropriate, suggest additional destinations that might work well for this group
-4. Be conversational and friendly"""
+2. Take into account each traveler's destination preferences when suggesting options
+3. Be specific and personalized in your advice
+4. If appropriate, suggest additional destinations that might work well for this group
+5. Be conversational and friendly"""
 
         try:
             # List available models for debugging
@@ -119,9 +131,39 @@ When you've made your choice, you can use the "Find Best Destinations" button to
 
 [Note: This is a mock response as the AI API experienced an error]"""
 
+        # Extract destination recommendations from the assistant's message
+        # Look for airport codes in the response (3 uppercase letters)
+        airport_code_regex = r'\b([A-Z]{3})\b'
+        suggested_airports = list(set(re.findall(airport_code_regex, assistant_message)))
+        
+        # Generate a rating for each suggested destination (4-5 for explicitly recommended ones)
+        destination_recommendations = {}
+        for airport in suggested_airports:
+            # Give higher ratings to airports mentioned more prominently
+            # Basic heuristic: if airport is mentioned in context that suggests recommendation
+            recommendation_phrases = [
+                f"recommend {airport}",
+                f"suggest {airport}",
+                f"{airport} would be",
+                f"{airport} is a good",
+                f"{airport} is great",
+                f"consider {airport}"
+            ]
+            
+            rating = 3  # Default rating for mentioned airports
+            for phrase in recommendation_phrases:
+                if phrase.lower() in assistant_message.lower():
+                    rating = 5
+                    break
+                elif airport in assistant_message.split("\n")[0:5]:  # Mentioned early in response
+                    rating = 4
+            
+            destination_recommendations[airport] = rating
+        
         return jsonify({
             'status': 'success',
-            'message': assistant_message
+            'message': assistant_message,
+            'destination_recommendations': destination_recommendations
         })
 
     except Exception as e:
