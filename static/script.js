@@ -1655,10 +1655,10 @@ function inspectStarDOM(element) {
 
 // Update an existing destination preference
 function updateDestinationPreference(preferenceItem, newRating, originalRating, adjustment) {
-    console.log(`DEBUG: Updating preference to rating ${newRating} from ${originalRating} ${adjustment || ""}`);
+    console.log(`DEBUG: Updating preference to rating ${newRating} from ${originalRating || "unknown"} ${adjustment || ""}`);
     
     // First, inspect the DOM to understand what we're working with
-    inspectStarDOM(preferenceItem);
+    // inspectStarDOM(preferenceItem);
     
     const ratingStars = preferenceItem.querySelector('.general-rating-stars');
     
@@ -1694,67 +1694,77 @@ function updateDestinationPreference(preferenceItem, newRating, originalRating, 
         // Remove negative class if it exists
         ratingStars.classList.remove('negative-rating');
         
-        // For negative ratings, show a special indicator
-        if (newRating < 0) {
-            // For negative ratings, we still show all stars as empty
-            stars.forEach(star => {
-                star.classList.remove('bi-star-fill');
-                star.classList.add('bi-star');
+        // Create new stars to avoid DOM manipulation issues
+        const starsContainer = document.createElement('div');
+        starsContainer.className = 'general-rating-stars mt-2';
+        starsContainer.dataset.rating = newRating;
+        
+        // Create 5 new stars
+        for (let i = 0; i < 5; i++) {
+            const starPosition = i + 1;
+            const star = document.createElement('i');
+            
+            if (newRating < 0 || starPosition > Math.abs(newRating)) {
+                star.className = 'bi bi-star rating-star';
+            } else {
+                star.className = 'bi bi-star-fill rating-star';
+            }
+            
+            star.dataset.position = starPosition;
+            star.id = `star-${Date.now()}-${i}`;
+            star.style.cursor = 'pointer';
+            star.style.marginRight = '3px';
+            
+            // Add click event 
+            star.addEventListener('click', function() {
+                const allStars = starsContainer.querySelectorAll('.rating-star');
+                const clickPosition = parseInt(this.dataset.position);
+                
+                // Reset all stars
+                allStars.forEach(s => {
+                    s.classList.remove('bi-star-fill');
+                    s.classList.add('bi-star');
+                });
+                
+                // Fill stars up to clicked position
+                allStars.forEach(s => {
+                    const pos = parseInt(s.dataset.position);
+                    if (pos <= clickPosition) {
+                        s.classList.remove('bi-star');
+                        s.classList.add('bi-star-fill');
+                    }
+                });
+                
+                // Update dataset
+                starsContainer.dataset.rating = clickPosition;
+                
+                // Update stored preference
+                const airport = preferenceItem.querySelector('.preference-value').value.trim().toUpperCase();
+                PreferenceManager.setRating(airport, clickPosition);
+                
+                // Update UI
+                const numRating = preferenceItem.querySelector('.numerical-rating');
+                if (numRating) {
+                    numRating.textContent = `Rating: ${clickPosition}`;
+                }
             });
             
+            starsContainer.appendChild(star);
+        }
+        
+        // Replace old stars with new ones
+        ratingStars.replaceWith(starsContainer);
+        
+        // For negative ratings, show a special indicator
+        if (newRating < 0) {
             // Add negative indicator
-            ratingStars.classList.add('negative-rating');
+            starsContainer.classList.add('negative-rating');
             const negativeIndicator = document.createElement('span');
             negativeIndicator.className = 'negative-indicator text-danger ms-2';
             negativeIndicator.textContent = '(Disliked)';
-            ratingStars.appendChild(negativeIndicator);
-            
-            // Store the negative rating
-            ratingStars.dataset.rating = newRating;
+            starsContainer.appendChild(negativeIndicator);
             
             console.log(`DEBUG: Set negative rating ${newRating}`);
-        } else {
-            // For positive ratings, update stars as usual
-            const absRating = Math.abs(newRating);
-            
-            // Log current star states before changing
-            console.log("DEBUG: Before update, star states:");
-            stars.forEach((star, idx) => {
-                console.log(`Star ${idx+1}: ${star.classList.contains('bi-star-fill') ? 'filled' : 'empty'}`);
-            });
-            
-            // DIRECT APPROACH: Explicitly manipulate each star by index
-            for (let i = 0; i < stars.length; i++) {
-                // Make all stars empty first
-                stars[i].classList.remove('bi-star-fill');
-                stars[i].classList.add('bi-star');
-                
-                // Then selectively fill the right number
-                if (i < absRating) {
-                    console.log(`Filling star at index ${i}`);
-                    stars[i].classList.remove('bi-star');
-                    stars[i].classList.add('bi-star-fill');
-                }
-            }
-            
-            // Force redraw by removing and re-adding all stars
-            const starsArray = Array.from(stars);
-            starsArray.forEach(star => {
-                const parent = star.parentNode;
-                const starClone = star.cloneNode(true);
-                parent.replaceChild(starClone, star);
-            });
-            
-            // Store the rating as a data attribute
-            ratingStars.dataset.rating = newRating;
-            console.log(`DEBUG: Set rating attribute to ${newRating}, filled ${absRating} stars`);
-            
-            // Log after update
-            const updatedStars = ratingStars.querySelectorAll('.rating-star');
-            console.log("DEBUG: After update, star states:");
-            updatedStars.forEach((star, idx) => {
-                console.log(`Star ${idx+1}: ${star.classList.contains('bi-star-fill') ? 'filled' : 'empty'}`);
-            });
         }
         
         // Add a visual update indicator with timestamp
@@ -1797,8 +1807,8 @@ function updateDestinationPreference(preferenceItem, newRating, originalRating, 
         }, 5000);
         
         // Inspect DOM after changes
-        console.log("AFTER UPDATE:");
-        inspectStarDOM(preferenceItem);
+        // console.log("AFTER UPDATE:");
+        // inspectStarDOM(preferenceItem);
     }
 }
 
@@ -2106,17 +2116,63 @@ const PreferenceManager = {
     // Update airport ratings based on API recommendations
     updateAirportRatings: function(recommendationsList, avoidList) {
         console.log("Updating airport ratings based on API recommendations");
+        const updatedAirports = [];
         
-        // Process all stored airport preferences
-        for (const [airport, rating] of Object.entries(this.preferences)) {
-            // Only process if it's an airport code (usually 3 letters)
-            if (airport.length === 3) {
-                if (this.isAirportRecommended(airport, recommendationsList)) {
-                    this.incrementRating(airport, 1);
-                    console.log(`${airport} is in recommendation list, increased rating`);
-                } else if (this.isAirportToAvoid(airport, avoidList)) {
-                    this.decrementRating(airport, 2);
-                    console.log(`${airport} is in avoid list, decreased rating`);
+        // First handle explicit recommendations
+        if (recommendationsList && typeof recommendationsList === 'object') {
+            for (const airport of Object.keys(recommendationsList)) {
+                const normalizedAirport = airport.trim().toUpperCase();
+                const result = this.incrementRating(normalizedAirport, 1);
+                console.log(`${airport} is in recommendation list, increased rating from ${result.oldRating} to ${result.newRating}`);
+                updatedAirports.push({
+                    airport: normalizedAirport,
+                    oldRating: result.oldRating,
+                    newRating: result.newRating,
+                    change: '+1'
+                });
+            }
+        }
+        
+        // Then handle explicit avoidances
+        if (avoidList && typeof avoidList === 'object') {
+            for (const airport of Object.keys(avoidList)) {
+                // Only process if not already updated as a recommendation
+                const normalizedAirport = airport.trim().toUpperCase();
+                if (!updatedAirports.some(item => item.airport === normalizedAirport)) {
+                    const result = this.decrementRating(normalizedAirport, 2);
+                    console.log(`${airport} is in avoid list, decreased rating from ${result.oldRating} to ${result.newRating}`);
+                    updatedAirports.push({
+                        airport: normalizedAirport,
+                        oldRating: result.oldRating,
+                        newRating: result.newRating,
+                        change: '-2'
+                    });
+                }
+            }
+        }
+        
+        // Process existing airports in our preferences that might be affected
+        for (const airport in this.preferences) {
+            // Only process actual airport codes (usually 3 letters)
+            if (airport.length === 3 && !updatedAirports.some(item => item.airport === airport)) {
+                if (recommendationsList && Object.keys(recommendationsList).some(rec => rec.trim().toUpperCase() === airport)) {
+                    const result = this.incrementRating(airport, 1);
+                    console.log(`${airport} is in recommendation list, increased rating from ${result.oldRating} to ${result.newRating}`);
+                    updatedAirports.push({
+                        airport: airport,
+                        oldRating: result.oldRating,
+                        newRating: result.newRating,
+                        change: '+1'
+                    });
+                } else if (avoidList && Object.keys(avoidList).some(avoid => avoid.trim().toUpperCase() === airport)) {
+                    const result = this.decrementRating(airport, 2);
+                    console.log(`${airport} is in avoid list, decreased rating from ${result.oldRating} to ${result.newRating}`);
+                    updatedAirports.push({
+                        airport: airport,
+                        oldRating: result.oldRating,
+                        newRating: result.newRating,
+                        change: '-2'
+                    });
                 }
             }
         }
@@ -2125,15 +2181,18 @@ const PreferenceManager = {
         this.save();
         
         // Update UI to reflect changes
-        this.syncUI();
+        this.syncUI(updatedAirports);
+        
+        return updatedAirports;
     },
     
     // Sync UI with current ratings
-    syncUI: function() {
+    syncUI: function(updatedAirports = []) {
         console.log("Syncing UI with stored preferences");
         
         // Sync all destination preferences in the UI
         const prefItems = document.querySelectorAll('.general-preference-item');
+        const updatedInUI = new Set(); // Track which airports got updated in the UI
         
         prefItems.forEach(item => {
             const typeSelect = item.querySelector('.preference-type');
@@ -2143,17 +2202,146 @@ const PreferenceManager = {
                     const destination = valueInput.value.trim().toUpperCase();
                     const currentRating = this.getRating(destination);
                     
+                    // Find if this destination was recently updated
+                    const recentUpdate = updatedAirports.find(update => update.airport === destination);
+                    
                     // Update the UI to reflect the current rating
                     const ratingStars = item.querySelector('.general-rating-stars');
                     if (ratingStars) {
                         // Update the stored rating
                         ratingStars.dataset.rating = currentRating;
                         
-                        // Update the visual display
-                        updateDestinationPreference(item, currentRating);
+                        // Update the visual display - if it was recently updated, pass the old rating and change info
+                        if (recentUpdate) {
+                            updateDestinationPreference(
+                                item, 
+                                currentRating, 
+                                recentUpdate.oldRating, 
+                                recentUpdate.change
+                            );
+                            updatedInUI.add(destination);
+                        } else {
+                            updateDestinationPreference(item, currentRating);
+                        }
                     }
                 }
             }
         });
+        
+        // Add missing airport preferences that were updated but not in the UI
+        updatedAirports.forEach(update => {
+            if (!updatedInUI.has(update.airport)) {
+                console.log(`Adding new preference UI for ${update.airport} that was updated but not in the DOM`);
+                // Add to general preferences automatically
+                addDestinationToGeneralPreferences(update.airport, update.newRating);
+            }
+        });
+        
+        // Highlight recent changes in a summary panel
+        if (updatedAirports.length > 0) {
+            this.displayRecentUpdates(updatedAirports);
+        }
+
+        // Fix any potential star display issues 
+        setTimeout(fixAllRatingDisplay, 100);
+    },
+    
+    // Display a summary of recent preference updates
+    displayRecentUpdates: function(updatedAirports) {
+        if (updatedAirports.length === 0) return;
+        
+        // Create or get the updates summary container
+        let summaryDiv = document.getElementById('preferenceSummaryUpdates');
+        if (!summaryDiv) {
+            summaryDiv = document.createElement('div');
+            summaryDiv.id = 'preferenceSummaryUpdates';
+            summaryDiv.className = 'mt-3 p-3 border rounded bg-info bg-opacity-10';
+            
+            // Add to page in a visible location
+            const generalPreferencesContainer = document.getElementById('generalPreferencesContainer');
+            if (generalPreferencesContainer) {
+                const heading = generalPreferencesContainer.querySelector('h4');
+                if (heading) {
+                    safeInsertAfter(summaryDiv, heading);
+                } else {
+                    safeInsertAsFirstChild(summaryDiv, generalPreferencesContainer);
+                }
+            } else {
+                const mainContainer = document.querySelector('.container');
+                if (mainContainer) {
+                    mainContainer.insertBefore(summaryDiv, mainContainer.firstChild);
+                }
+            }
+        }
+        
+        // Clear previous content
+        summaryDiv.innerHTML = '';
+        
+        // Add heading
+        const heading = document.createElement('h5');
+        heading.textContent = 'Preference Rating Updates';
+        heading.className = 'mb-3';
+        summaryDiv.appendChild(heading);
+        
+        // Add description
+        const description = document.createElement('p');
+        description.textContent = 'The following airport ratings were updated based on conversation:';
+        description.className = 'mb-3 small text-muted';
+        summaryDiv.appendChild(description);
+        
+        // Create a table for updates
+        const table = document.createElement('table');
+        table.className = 'table table-sm table-hover';
+        
+        // Add table header
+        const thead = document.createElement('thead');
+        thead.innerHTML = `
+            <tr>
+                <th>Airport</th>
+                <th>Previous</th>
+                <th>New</th>
+                <th>Change</th>
+            </tr>
+        `;
+        table.appendChild(thead);
+        
+        // Add table body with updates
+        const tbody = document.createElement('tbody');
+        updatedAirports.forEach(update => {
+            const row = document.createElement('tr');
+            
+            // Add CSS class based on positive/negative change
+            if (update.change.includes('+')) {
+                row.className = 'table-success';
+            } else {
+                row.className = 'table-danger';
+            }
+            
+            row.innerHTML = `
+                <td><strong>${update.airport}</strong></td>
+                <td>${update.oldRating}</td>
+                <td>${update.newRating}</td>
+                <td><span class="badge ${update.change.includes('+') ? 'bg-success' : 'bg-danger'}">${update.change}</span></td>
+            `;
+            tbody.appendChild(row);
+        });
+        table.appendChild(tbody);
+        summaryDiv.appendChild(table);
+        
+        // Add dismiss button
+        const dismissButton = document.createElement('button');
+        dismissButton.className = 'btn btn-sm btn-outline-secondary';
+        dismissButton.textContent = 'Dismiss Summary';
+        dismissButton.addEventListener('click', function() {
+            summaryDiv.remove();
+        });
+        summaryDiv.appendChild(dismissButton);
+        
+        // Auto-remove after 30 seconds
+        setTimeout(() => {
+            if (document.getElementById('preferenceSummaryUpdates')) {
+                document.getElementById('preferenceSummaryUpdates').remove();
+            }
+        }, 30000);
     }
 }; 
