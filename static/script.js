@@ -139,7 +139,168 @@ document.addEventListener('DOMContentLoaded', function() {
             starsContainer.dataset.rating = rating;
         }
     });
+    
+    // Initialize chat functionality
+    initializeChat();
 });
+
+// Initialize chat functionality
+function initializeChat() {
+    const chatInput = document.getElementById('chatInput');
+    const sendChatBtn = document.getElementById('sendChatBtn');
+    const chatMessages = document.getElementById('chatMessages');
+    const chatLoadingIndicator = document.getElementById('chatLoadingIndicator');
+    
+    // Handle sending messages
+    sendChatBtn.addEventListener('click', sendChatMessage);
+    
+    // Allow sending with Enter key
+    chatInput.addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+            sendChatMessage();
+        }
+    });
+    
+    // Function to send chat message
+    function sendChatMessage() {
+        const message = chatInput.value.trim();
+        if (!message) return;
+        
+        // Add user message to chat
+        addChatMessage(message, 'user');
+        chatInput.value = '';
+        
+        // Show loading indicator
+        chatLoadingIndicator.classList.remove('d-none');
+        
+        // Get current travelers and preferences
+        const preferences = getCurrentPreferences();
+        
+        // Send to API
+        fetch('/api/chat', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                message: message,
+                preferences: preferences
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            // Hide loading indicator
+            chatLoadingIndicator.classList.add('d-none');
+            
+            if (data.message) {
+                // Add assistant's message to chat
+                addChatMessage(data.message, 'bot');
+                
+                // Check for destination suggestions in the response
+                checkForDestinationSuggestions(data.message);
+            } else if (data.error) {
+                addChatMessage('Error: ' + data.error, 'bot');
+            }
+        })
+        .catch(error => {
+            // Hide loading indicator
+            chatLoadingIndicator.classList.add('d-none');
+            addChatMessage('Sorry, there was an error processing your request.', 'bot');
+            console.error('Chat API error:', error);
+        });
+    }
+    
+    // Function to add a message to the chat
+    function addChatMessage(text, sender) {
+        const messageDiv = document.createElement('div');
+        messageDiv.className = `message ${sender}-message`;
+        messageDiv.textContent = text;
+        chatMessages.appendChild(messageDiv);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+    
+    // Get current preferences from the form
+    function getCurrentPreferences() {
+        // Get basic preferences
+        const travelDate = document.getElementById('travelDate').value;
+        const costWeight = parseFloat(document.getElementById('costWeight').value);
+        const emissionsWeight = parseFloat(document.getElementById('emissionsWeight').value);
+        const preferenceWeight = parseFloat(document.getElementById('preferenceWeight').value);
+        
+        // Get traveler information
+        const travelers = [];
+        const travelerElements = document.querySelectorAll('.traveler-entry');
+        
+        travelerElements.forEach(travelerEl => {
+            const name = travelerEl.querySelector('.traveler-name').value;
+            const origin = travelerEl.querySelector('.traveler-origin').value;
+            
+            if (name && origin) {
+                travelers.push({
+                    name: name,
+                    origin: origin
+                });
+            }
+        });
+        
+        // Get selected destinations
+        const destinations = [];
+        const destinationCheckboxes = document.querySelectorAll('.destination-checkbox:checked');
+        destinationCheckboxes.forEach(checkbox => {
+            destinations.push(checkbox.value);
+        });
+        
+        return {
+            travelDate: travelDate,
+            costWeight: costWeight,
+            emissionsWeight: emissionsWeight,
+            preferenceWeight: preferenceWeight,
+            travelers: travelers,
+            destinations: destinations
+        };
+    }
+    
+    // Check for destination suggestions in AI response
+    function checkForDestinationSuggestions(message) {
+        // Look for airport codes in the response (3 uppercase letters)
+        const airportCodeRegex = /\b([A-Z]{3})\b/g;
+        const suggestedAirports = [...message.matchAll(airportCodeRegex)].map(match => match[1]);
+        
+        if (suggestedAirports.length > 0) {
+            // Make suggestions visible
+            const aiSuggestions = document.getElementById('aiSuggestions');
+            const suggestionsContent = document.getElementById('suggestionsContent');
+            aiSuggestions.classList.remove('d-none');
+            
+            // Clear previous suggestions
+            suggestionsContent.innerHTML = '';
+            
+            // Create suggestion buttons
+            const uniqueAirports = [...new Set(suggestedAirports)];
+            
+            uniqueAirports.forEach(airport => {
+                const button = document.createElement('button');
+                button.className = 'btn btn-sm btn-outline-primary me-2 mb-2';
+                button.textContent = `Add ${airport}`;
+                button.addEventListener('click', () => {
+                    // Add this airport to selected destinations
+                    const checkbox = document.getElementById(`dest-${airport}`);
+                    if (checkbox && !checkbox.checked) {
+                        checkbox.checked = true;
+                        button.className = 'btn btn-sm btn-success me-2 mb-2';
+                        button.textContent = `Added ${airport}`;
+                        button.disabled = true;
+                        
+                        // Add a message to acknowledge the action
+                        addChatMessage(`I've added ${airport} to your destination options.`, 'bot');
+                    }
+                });
+                
+                suggestionsContent.appendChild(button);
+            });
+        }
+    }
+}
 
 // Load airport codes from API
 async function loadAirportCodes() {

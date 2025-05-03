@@ -3,6 +3,22 @@ import os
 import json
 from datetime import datetime
 from travel_planner import Traveler, find_optimal_destinations, print_destinations
+import google.generativeai as genai
+from dotenv import load_dotenv
+
+# Try to load environment variables
+try:
+    load_dotenv()
+except Exception as e:
+    print(f"Error loading .env file: {e}")
+
+# Set Google Gemini API key
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "AIzaSyA0els6YRkrRbld7cLKlMcPjKu2FaWLdA0")
+if not GOOGLE_API_KEY:
+    print("Warning: GOOGLE_API_KEY environment variable is not set.")
+    
+# Configure Google Gemini API
+genai.configure(api_key=GOOGLE_API_KEY)
 
 app = Flask(__name__)
 
@@ -10,6 +26,103 @@ app = Flask(__name__)
 def index():
     """Render the main page."""
     return render_template('index.html')
+
+@app.route('/chat')
+def chat():
+    """Render the chat interface."""
+    return render_template('chat.html')
+
+@app.route('/api/chat', methods=['POST'])
+def chat_api():
+    """Handle chat messages and interact with Gemini AI."""
+    try:
+        data = request.json
+        message = data.get('message', '')
+        preferences = data.get('preferences', {})
+        
+        # Extract detailed preferences
+        travel_date = preferences.get('travelDate', 'Not specified')
+        cost_weight = preferences.get('costWeight', 0.6)
+        emissions_weight = preferences.get('emissionsWeight', 0.2)
+        preference_weight = preferences.get('preferenceWeight', 0.2)
+        travelers = preferences.get('travelers', [])
+        destinations = preferences.get('destinations', [])
+        
+        # Format traveler information
+        traveler_info = ""
+        for i, traveler in enumerate(travelers):
+            traveler_info += f"{i+1}. {traveler.get('name', 'Unknown')} from {traveler.get('origin', 'Unknown')}\n"
+        
+        # Format destination options
+        destination_info = ", ".join(destinations) if destinations else "Not specified"
+
+        # Format the prompt with user preferences
+        prompt = f"""You are a travel planning assistant helping users find the best destination for a group trip. The user has provided the following information:
+
+CURRENT TRAVEL PLAN:
+- Travel Date: {travel_date}
+- Importance Weights:
+  * Cost: {cost_weight} (higher means cost is more important)
+  * Emissions: {emissions_weight} (higher means environmental impact is more important)
+  * Personal Preferences: {preference_weight} (higher means individual preferences matter more)
+
+TRAVELERS ({len(travelers)}):
+{traveler_info}
+
+DESTINATION OPTIONS:
+{destination_info}
+
+USER QUESTION:
+{message}
+
+Provide helpful travel advice based on this information. If you suggest specific destinations, use the standard 3-letter airport codes (like LAX, JFK, etc.) and explain why they might work well for this group.
+
+Remember:
+1. Consider the origins of all travelers when making recommendations
+2. Be specific and personalized in your advice
+3. If appropriate, suggest additional destinations that might work well for this group
+4. Be conversational and friendly"""
+
+        try:
+            # Initialize Gemini model - use the correct model name
+            model = genai.GenerativeModel('gemini-1.0-pro')
+            
+            # Generate response
+            response = model.generate_content(prompt)
+            
+            # Extract the response text
+            assistant_message = response.text
+            
+            print(f"Gemini API response generated successfully.")
+            
+        except Exception as e:
+            # Return a mock response if API call fails
+            print(f"Gemini API error: {str(e)}")
+            assistant_message = f"""I'd be happy to help with your travel planning!
+
+Based on your current travel plan:
+- Travel Date: {travel_date}
+- {len(travelers)} travelers from different origins: {', '.join([t.get('origin', 'Unknown') for t in travelers])}
+- Considering destinations: {destination_info}
+
+I would recommend looking at destinations that provide a good balance of travel costs and convenience for everyone in your group. 
+
+For your specific group traveling from {', '.join([t.get('origin', 'Unknown') for t in travelers])}, consider:
+- Chicago (ORD) as a central meeting point with good flight connections
+- Miami (MIA) for a warm destination with good flight options from major cities
+- Denver (DEN) as a mountain getaway with direct flights from many cities
+
+When you've made your choice, you can use the "Find Best Destinations" button to get detailed flight information.
+
+[Note: This is a mock response as the AI API experienced an error]"""
+
+        return jsonify({
+            'status': 'success',
+            'message': assistant_message
+        })
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/find-destinations', methods=['POST'])
 def find_destinations():
