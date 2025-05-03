@@ -84,8 +84,11 @@ Remember:
 4. Be conversational and friendly"""
 
         try:
-            # Initialize Gemini model - use the correct model name
-            model = genai.GenerativeModel('gemini-1.0-pro')
+            # List available models for debugging
+            print("Available Gemini models:", [model.name for model in genai.list_models()])
+            
+            # Initialize Gemini model - use correct model name
+            model = genai.GenerativeModel('models/gemini-pro')
             
             # Generate response
             response = model.generate_content(prompt)
