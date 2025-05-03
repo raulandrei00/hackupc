@@ -302,10 +302,22 @@ function initializeChat() {
             const value = item.querySelector('.preference-value').value;
             
             if (value.trim()) {
-                generalPreferences.push({
-                    type: type,
-                    value: value.trim()
-                });
+                // For preferred destinations, include the rating
+                if (type === 'preferred_destination') {
+                    const ratingStars = item.querySelector('.general-rating-stars');
+                    const rating = ratingStars ? parseInt(ratingStars.dataset.rating || '3') : 3;
+                    
+                    generalPreferences.push({
+                        type: type,
+                        value: value.trim(),
+                        rating: rating
+                    });
+                } else {
+                    generalPreferences.push({
+                        type: type,
+                        value: value.trim()
+                    });
+                }
             }
         });
         
@@ -407,6 +419,24 @@ function initializeChat() {
             
             // Create buttons to add to travelers
             const travelerElements = document.querySelectorAll('.traveler-entry');
+            
+            // Create the "Add to General Preferences" button first
+            const addToGeneralButton = document.createElement('button');
+            addToGeneralButton.className = 'btn btn-sm btn-outline-primary ms-2';
+            addToGeneralButton.textContent = 'Add to General Preferences';
+            addToGeneralButton.dataset.airport = airport;
+            addToGeneralButton.dataset.rating = rating;
+            
+            addToGeneralButton.addEventListener('click', function() {
+                addDestinationToGeneralPreferences(this.dataset.airport, this.dataset.rating);
+                this.className = 'btn btn-sm btn-primary ms-2';
+                this.textContent = 'Added to General';
+                this.disabled = true;
+            });
+            
+            recDiv.appendChild(addToGeneralButton);
+            
+            // Now add buttons for individual travelers
             travelerElements.forEach((travelerEl, index) => {
                 const travelerName = travelerEl.querySelector('.traveler-name').value;
                 if (travelerName) {
@@ -609,6 +639,49 @@ function initializeChat() {
             
             // Trigger change to update placeholders
             typeSelect.dispatchEvent(new Event('change'));
+        }
+    }
+    
+    // Add a destination to general preferences
+    function addDestinationToGeneralPreferences(airport, rating) {
+        // Add a new general preference
+        addGeneralPreference();
+        
+        // Get the newly added preference (last one)
+        const prefItems = document.querySelectorAll('.general-preference-item');
+        const lastItem = prefItems[prefItems.length - 1];
+        
+        if (lastItem) {
+            const typeSelect = lastItem.querySelector('.preference-type');
+            const valueInput = lastItem.querySelector('.preference-value');
+            
+            // Set to preferred destination
+            typeSelect.value = 'preferred_destination';
+            valueInput.value = airport;
+            
+            // Trigger change to update UI and show stars
+            typeSelect.dispatchEvent(new Event('change'));
+            
+            // Set the rating
+            setTimeout(() => {
+                const ratingStars = lastItem.querySelector('.general-rating-stars');
+                if (ratingStars) {
+                    const stars = ratingStars.querySelectorAll('.rating-star');
+                    const ratingValue = parseInt(rating);
+                    
+                    // Update stars
+                    stars.forEach(star => {
+                        const starRating = parseInt(star.dataset.rating);
+                        if (starRating <= ratingValue) {
+                            star.classList.remove('bi-star');
+                            star.classList.add('bi-star-fill');
+                        }
+                    });
+                    
+                    // Store the rating
+                    ratingStars.dataset.rating = ratingValue;
+                }
+            }, 50); // Small delay to ensure stars are rendered
         }
     }
 }
@@ -876,6 +949,19 @@ function addGeneralPreference() {
     
     // Update placeholder based on selected type
     typeSelect.addEventListener('change', function() {
+        // Get parent element to manage rating stars
+        const parentElement = this.closest('.general-preference-item');
+        const valueInput = parentElement.querySelector('.preference-value');
+        
+        // Remove any existing rating stars
+        const existingRatingStars = parentElement.querySelector('.general-rating-stars');
+        if (existingRatingStars) {
+            existingRatingStars.remove();
+        }
+        
+        // Reset the input display
+        valueInput.style.display = 'block';
+        
         switch(this.value) {
             case 'airline':
                 valueInput.placeholder = 'Preferred airline (e.g., Delta, American)';
@@ -901,12 +987,61 @@ function addGeneralPreference() {
                 valueInput.placeholder = 'Class (Economy, Business, First)';
                 valueInput.type = 'text';
                 break;
+            case 'preferred_destination':
+                valueInput.placeholder = 'Airport code (e.g., LAX, JFK)';
+                valueInput.type = 'text';
+                
+                // Create rating stars for destination preferences
+                const ratingStarsDiv = document.createElement('div');
+                ratingStarsDiv.className = 'general-rating-stars mt-2';
+                
+                // Create 5 stars
+                for (let i = 1; i <= 5; i++) {
+                    const star = document.createElement('i');
+                    star.className = 'bi bi-star rating-star';
+                    star.dataset.rating = i;
+                    star.style.cursor = 'pointer';
+                    star.style.marginRight = '3px';
+                    
+                    // Add click event for stars
+                    star.addEventListener('click', function() {
+                        const stars = ratingStarsDiv.querySelectorAll('.rating-star');
+                        const clickedRating = parseInt(this.dataset.rating);
+                        
+                        // Update stars
+                        stars.forEach(s => {
+                            const starRating = parseInt(s.dataset.rating);
+                            if (starRating <= clickedRating) {
+                                s.classList.remove('bi-star');
+                                s.classList.add('bi-star-fill');
+                            } else {
+                                s.classList.remove('bi-star-fill');
+                                s.classList.add('bi-star');
+                            }
+                        });
+                        
+                        // Store the rating in a data attribute
+                        ratingStarsDiv.dataset.rating = clickedRating;
+                    });
+                    
+                    ratingStarsDiv.appendChild(star);
+                }
+                
+                // Add rating caption
+                const ratingCaption = document.createElement('span');
+                ratingCaption.className = 'ms-2 small text-muted';
+                ratingCaption.textContent = 'Rating (1-5)';
+                ratingStarsDiv.appendChild(ratingCaption);
+                
+                // Insert after input
+                valueInput.parentNode.insertBefore(ratingStarsDiv, valueInput.nextSibling);
+                break;
         }
     });
     
     // Set initial placeholder
     typeSelect.dispatchEvent(new Event('change'));
-    
+
     preferencesContainer.appendChild(preferenceNode);
 }
 

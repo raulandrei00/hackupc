@@ -72,7 +72,13 @@ def chat_api():
             for pref in general_preferences:
                 pref_type = pref.get('type', '').replace('_', ' ').title()
                 pref_value = pref.get('value', '')
-                general_pref_info += f"- {pref_type}: {pref_value}\n"
+                
+                # For destination preferences, include rating
+                if pref.get('type') == 'preferred_destination':
+                    rating = pref.get('rating', 3)
+                    general_pref_info += f"- {pref_type}: {pref_value} (Rating: {rating}/5)\n"
+                else:
+                    general_pref_info += f"- {pref_type}: {pref_value}\n"
         
         # Format destination options
         destination_info = ", ".join(destinations) if destinations else "Not specified"
