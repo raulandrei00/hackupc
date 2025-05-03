@@ -1,7 +1,4 @@
 document.addEventListener('DOMContentLoaded', function() {
-    // Initialize preference manager
-    PreferenceManager.init();
-    
     // Add CSS for animations
     const style = document.createElement('style');
     style.textContent = `
@@ -190,12 +187,6 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Initialize chat functionality
     initializeChat();
-
-    // Add the fix button
-    addFixButton();
-    
-    // Try to fix ratings after a short delay
-    setTimeout(fixAllRatingDisplay, 1000);
 });
 
 // Helper function to safely insert an element after another element
@@ -308,19 +299,11 @@ function initializeChat() {
                 // Process destination preference recommendations if available
                 if (data.destination_recommendations && Object.keys(data.destination_recommendations).length > 0) {
                     displayDestinationRecommendations(data.destination_recommendations);
-                    
-                    // Update global airport preferences based on suggestions and avoid list
-                    PreferenceManager.updateAirportRatings(data.destination_recommendations, data.destinations_to_avoid);
                 }
                 
                 // Process destinations to avoid if available
                 if (data.destinations_to_avoid && Object.keys(data.destinations_to_avoid).length > 0) {
                     displayDestinationsToAvoid(data.destinations_to_avoid);
-                    
-                    // If recommendations weren't processed above, make sure to update based on avoid list
-                    if (!data.destination_recommendations || Object.keys(data.destination_recommendations).length === 0) {
-                        PreferenceManager.updateAirportRatings(null, data.destinations_to_avoid);
-                    }
                 }
                 
                 // Process general preference suggestions if available
@@ -531,31 +514,37 @@ function initializeChat() {
         }
     }
     
-    // Process destination preference recommendations from AI
+    // Display destination preference recommendations from AI
     function displayDestinationRecommendations(recommendations) {
-        // Check for duplicates first and track changes
-        const changedPreferences = [];
+        // Check for duplicates first and remove any destinations that already exist
+        const existingDestinations = getAllExistingDestinationPreferences();
+        console.log("Existing destinations before adding recommendations:", existingDestinations);
         
-        console.log("Processing AI recommendations:", recommendations);
-        
-        // Update each recommendation through the preference manager
+        // Filter out any destinations that already exist as preferences
+        const newRecommendations = {};
         for (const [airport, rating] of Object.entries(recommendations)) {
-            // Positive recommendations should increment the rating
-            const result = PreferenceManager.incrementRating(airport, 1);
-            changedPreferences.push({
-                destination: airport,
-                oldRating: result.oldRating,
-                newRating: result.newRating,
-                adjustment: `+1`,
-                type: 'preferred_destination'
-            });
+            if (!existingDestinations.includes(airport.trim().toUpperCase())) {
+                newRecommendations[airport] = rating;
+            } else {
+                console.log(`Skipping recommendation for ${airport} as it already exists in preferences`);
+                // Instead of adding a new preference, update the existing one
+                const existingPref = findExistingDestinationPreference(airport);
+                if (existingPref) {
+                    updateDestinationPreference(existingPref, rating);
+                    console.log(`Updated existing preference for ${airport} with rating ${rating}`);
+                }
+            }
         }
         
-        // Now sync the UI with all stored preferences
-        PreferenceManager.syncUI();
+        // Only add new recommendations
+        for (const [airport, rating] of Object.entries(newRecommendations)) {
+            // Automatically add to general preferences
+            addDestinationToGeneralPreferences(airport, rating);
+        }
         
-        // Don't create recommendation UI if there are no recommendations
-        if (Object.keys(recommendations).length === 0) {
+        // Don't create recommendation UI if there are no new recommendations
+        if (Object.keys(newRecommendations).length === 0 && Object.keys(recommendations).length > 0) {
+            console.log("All recommendations were existing preferences, only updated ratings");
             return;
         }
         
@@ -594,10 +583,10 @@ function initializeChat() {
         header.textContent = 'AI Destination Preference Recommendations';
         recommendationsDiv.appendChild(header);
         
-        // Add notification about preference updates
+        // Add notification that preferences were automatically added
         const autoAddNotice = document.createElement('div');
         autoAddNotice.className = 'alert alert-success mb-3';
-        autoAddNotice.textContent = `Updated ${changedPreferences.length} destination preferences based on recommendations.`;
+        autoAddNotice.textContent = `Automatically added ${Object.keys(newRecommendations).length} new destination preferences and updated ${Object.keys(recommendations).length - Object.keys(newRecommendations).length} existing ones.`;
         recommendationsDiv.appendChild(autoAddNotice);
         
         // Add description
@@ -611,9 +600,8 @@ function initializeChat() {
         recommendationsContainer.className = 'recommendations-container';
         recommendationsDiv.appendChild(recommendationsContainer);
         
-        // Show all recommendations
-        for (const [airport, recommendedRating] of Object.entries(recommendations)) {
-            const actualRating = PreferenceManager.getRating(airport);
+        // Show all recommendations, including updated ones
+        for (const [airport, rating] of Object.entries(recommendations)) {
             const recDiv = document.createElement('div');
             recDiv.className = 'recommendation-item d-flex align-items-center mb-2 p-2 border-bottom';
             
@@ -621,20 +609,24 @@ function initializeChat() {
             const airportInfo = document.createElement('div');
             airportInfo.className = 'flex-grow-1';
             
-            // Show the actual current rating
-            airportInfo.innerHTML = `<strong>${airport}</strong> - Current Rating: ${actualRating}/5 <span class="badge bg-success ms-2">+1</span>`;
+            // Show different text for new vs updated preferences
+            if (newRecommendations[airport] !== undefined) {
+                airportInfo.innerHTML = `<strong>${airport}</strong> - Rating: ${rating}/5 (New)`;
+            } else {
+                airportInfo.innerHTML = `<strong>${airport}</strong> - Rating: ${rating}/5 (Updated)`;
+            }
             
             recDiv.appendChild(airportInfo);
             
             // Create buttons to add to travelers
             const travelerElements = document.querySelectorAll('.traveler-entry');
             
-            // Create the "Add to General Preferences" button - now shows as already added
+            // Create the "Add to General Preferences" button first - now shows as already added
             const addToGeneralButton = document.createElement('button');
             addToGeneralButton.className = 'btn btn-sm btn-primary ms-2';
             addToGeneralButton.textContent = 'Added to General';
             addToGeneralButton.dataset.airport = airport;
-            addToGeneralButton.dataset.rating = actualRating;
+            addToGeneralButton.dataset.rating = rating;
             addToGeneralButton.disabled = true;
             
             recDiv.appendChild(addToGeneralButton);
@@ -647,7 +639,7 @@ function initializeChat() {
                     addButton.className = 'btn btn-sm btn-outline-success ms-2';
                     addButton.textContent = `Add to ${travelerName}`;
                     addButton.dataset.airport = airport;
-                    addButton.dataset.rating = actualRating;
+                    addButton.dataset.rating = rating;
                     addButton.dataset.travelerIndex = index;
                     
                     addButton.addEventListener('click', function() {
@@ -676,27 +668,6 @@ function initializeChat() {
     
     // Display destinations to avoid from AI
     function displayDestinationsToAvoid(destinations) {
-        // Track changes to preferences
-        const changedPreferences = [];
-        
-        console.log("Processing destinations to avoid:", destinations);
-        
-        // Apply negative ratings through the preference manager
-        for (const [airport, rating] of Object.entries(destinations)) {
-            // Negative recommendations should decrement the rating
-            const result = PreferenceManager.decrementRating(airport, 2);
-            changedPreferences.push({
-                destination: airport,
-                oldRating: result.oldRating,
-                newRating: result.newRating,
-                adjustment: `-2`,
-                type: 'preferred_destination'
-            });
-        }
-        
-        // Now sync the UI with all stored preferences
-        PreferenceManager.syncUI();
-        
         // Get the existing destinations to avoid or create a new container
         let avoidDiv = document.getElementById('aiDestinationsToAvoid');
         if (!avoidDiv) {
@@ -764,12 +735,6 @@ function initializeChat() {
         header.className = 'text-danger';
         avoidDiv.appendChild(header);
         
-        // Add notification about preference updates
-        const autoAddNotice = document.createElement('div');
-        autoAddNotice.className = 'alert alert-danger mb-3';
-        autoAddNotice.textContent = `Updated ${changedPreferences.length} destination preferences with negative ratings.`;
-        avoidDiv.appendChild(autoAddNotice);
-        
         // Add description
         const description = document.createElement('p');
         description.textContent = 'The AI suggests avoiding these destinations based on your requirements:';
@@ -782,23 +747,51 @@ function initializeChat() {
         avoidDiv.appendChild(avoidContainer);
         
         // Add each destination to avoid with reasons
-        for (const [airport, oldRating] of Object.entries(destinations)) {
-            const currentRating = PreferenceManager.getRating(airport);
+        for (const [airport, rating] of Object.entries(destinations)) {
             const avoidItem = document.createElement('div');
             avoidItem.className = 'avoid-item d-flex align-items-center mb-2 p-2 border-bottom border-danger border-opacity-25';
             
             // Create icon and airport code
             const airportInfo = document.createElement('div');
             airportInfo.className = 'flex-grow-1';
-            airportInfo.innerHTML = `<i class="bi bi-x-circle-fill text-danger me-2"></i><strong>${airport}</strong> - Current Rating: ${currentRating}/5 <span class="badge bg-danger ms-2">-2</span>`;
+            airportInfo.innerHTML = `<i class="bi bi-x-circle-fill text-danger me-2"></i><strong>${airport}</strong>`;
             avoidItem.appendChild(airportInfo);
             
             // Create button to add as negative preference
             const addAsNegativeBtn = document.createElement('button');
-            addAsNegativeBtn.className = 'btn btn-sm btn-danger ms-2';
-            addAsNegativeBtn.textContent = 'Added as Negative';
+            addAsNegativeBtn.className = 'btn btn-sm btn-outline-danger ms-2';
+            addAsNegativeBtn.textContent = 'Add as Negative Preference';
             addAsNegativeBtn.dataset.airport = airport;
-            addAsNegativeBtn.disabled = true;
+            
+            // Check if it's already in preferences
+            const existingPref = findExistingDestinationPreference(airport);
+            if (existingPref) {
+                const ratingStars = existingPref.querySelector('.general-rating-stars');
+                const currentRating = parseInt(ratingStars?.dataset.rating || '0');
+                
+                if (currentRating < 0) {
+                    // Already a negative preference
+                    addAsNegativeBtn.className = 'btn btn-sm btn-danger ms-2';
+                    addAsNegativeBtn.textContent = 'Already Negative';
+                    addAsNegativeBtn.disabled = true;
+                } else {
+                    // Exists but not negative
+                    addAsNegativeBtn.addEventListener('click', function() {
+                        updateDestinationPreference(existingPref, -3);
+                        this.className = 'btn btn-sm btn-danger ms-2';
+                        this.textContent = 'Added as Negative';
+                        this.disabled = true;
+                    });
+                }
+            } else {
+                // New negative preference
+                addAsNegativeBtn.addEventListener('click', function() {
+                    addDestinationToGeneralPreferences(this.dataset.airport, -3);
+                    this.className = 'btn btn-sm btn-danger ms-2';
+                    this.textContent = 'Added as Negative';
+                    this.disabled = true;
+                });
+            }
             
             avoidItem.appendChild(addAsNegativeBtn);
             avoidContainer.appendChild(avoidItem);
@@ -814,85 +807,94 @@ function initializeChat() {
         avoidDiv.appendChild(dismissButton);
     }
     
-    // Apply preference modifications from the Chat API
-    function applyPreferenceModifications(modifications) {
-        console.log("Applying preference modifications:", modifications);
+    // Helper function to get all existing destination preferences
+    function getAllExistingDestinationPreferences() {
+        const prefItems = document.querySelectorAll('.general-preference-item');
+        const destinations = [];
         
-        if (!modifications || modifications.length === 0) {
-            console.log("No modifications to apply");
-            return;
+        for (const item of prefItems) {
+            const typeSelect = item.querySelector('.preference-type');
+            const valueInput = item.querySelector('.preference-value');
+            
+            if (typeSelect && valueInput && typeSelect.value === 'preferred_destination') {
+                const destinationCode = valueInput.value.trim().toUpperCase();
+                if (destinationCode && !destinations.includes(destinationCode)) {
+                    destinations.push(destinationCode);
+                }
+            }
         }
         
-        // Track modified items for UI feedback
-        const modifiedItems = [];
+        console.log("All existing destination preferences:", destinations);
+        return destinations;
+    }
+    
+    // Add a recommendation as a preference to a specific traveler
+    function addPreferenceToTraveler(travelerIndex, airport, rating) {
+        const travelerElements = document.querySelectorAll('.traveler-entry');
+        const travelerEl = travelerElements[travelerIndex];
         
-        // Apply all modifications through the preference manager
-        let appliedModifications = 0;
-        
-        modifications.forEach(mod => {
-            console.log(`Processing modification for ${mod.type}: ${mod.value} (Rating: ${mod.rating})`);
+        if (travelerEl) {
+            // Add a new preference to this traveler
+            const preferencesContainer = travelerEl.querySelector('.preferences-list');
             
-            if (mod.type === 'preferred_destination') {
-                // Get the current rating from our preference manager
-                const destination = mod.value.trim().toUpperCase();
-                const currentRating = PreferenceManager.getRating(destination);
-                
-                // Determine if this is a positive or negative adjustment
-                const adjustment = mod.rating > currentRating ? 
-                    PreferenceManager.incrementRating(destination, 1) : 
-                    PreferenceManager.decrementRating(destination, 1);
-                
-                console.log(`Modified ${destination} from ${adjustment.oldRating} to ${adjustment.newRating}`);
-                
-                appliedModifications++;
-                
-                // Check if this preference is in the UI
-                const existingPref = findExistingDestinationPreference(destination);
-                if (existingPref) {
-                    modifiedItems.push(existingPref);
+            // First check if there's already a preference for this airport
+            const existingPrefEntries = travelerEl.querySelectorAll('.preference-entry');
+            let preferenceExists = false;
+            
+            existingPrefEntries.forEach(entry => {
+                const destSelect = entry.querySelector('.preference-destination');
+                if (destSelect && destSelect.value === airport) {
+                    // Update the existing preference rating
+                    const ratingStars = entry.querySelector('.rating-stars');
+                    const stars = ratingStars.querySelectorAll('.rating-star');
+                    
+                    // Update stars
+                    stars.forEach(star => {
+                        const starRating = parseInt(star.dataset.rating);
+                        if (starRating <= rating) {
+                            star.classList.remove('bi-star');
+                            star.classList.add('bi-star-fill');
+                        } else {
+                            star.classList.remove('bi-star-fill');
+                            star.classList.add('bi-star');
+                        }
+                    });
+                    
+                    // Store the rating value
+                    ratingStars.dataset.rating = rating;
+                    preferenceExists = true;
                 }
-            } else {
-                // Handle other types of preferences
-                const existingPref = findExistingGeneralPreference(mod.type, mod.value);
-                
-                if (existingPref) {
-                    console.log(`Updating existing general preference: ${mod.type} - ${mod.value}`);
-                    // Update existing preference
-                    updateGeneralPreference(existingPref, mod.value, mod.sentiment);
-                    appliedModifications++;
-                    modifiedItems.push(existingPref);
-                } else {
-                    console.log(`Adding new general preference: ${mod.type} - ${mod.value}`);
-                    // Add as new preference
-                    addToGeneralPreferences(mod.type, mod.value);
-                    appliedModifications++;
-                }
-            }
-        });
-        
-        // Now sync the UI with all stored preferences
-        PreferenceManager.syncUI();
-        
-        console.log(`Applied ${appliedModifications} preference modifications`);
-        
-        // Scroll to the recently updated preferences
-        setTimeout(() => {
-            const updatedContainer = document.getElementById('recentlyUpdatedPreferences');
-            if (updatedContainer) {
-                updatedContainer.scrollIntoView({ behavior: 'smooth', block: 'start' });
-            } else if (modifiedItems.length > 0) {
-                // If there's no recently updated container, scroll to the first modified item
-                modifiedItems[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
-                
-                // Add a temporary highlight class
-                modifiedItems.forEach(item => {
-                    item.classList.add('preference-updated');
-                    setTimeout(() => {
-                        item.classList.remove('preference-updated');
-                    }, 5000);
+            });
+            
+            // If the preference doesn't exist yet, create a new one
+            if (!preferenceExists) {
+                addPreference(travelerEl).then(() => {
+                    // Get the newly added preference entry (it's the last one)
+                    const newPrefEntry = travelerEl.querySelector('.preferences-list .preference-entry:last-child');
+                    if (newPrefEntry) {
+                        // Set the destination
+                        const destSelect = newPrefEntry.querySelector('.preference-destination');
+                        destSelect.value = airport;
+                        
+                        // Set the rating
+                        const ratingStars = newPrefEntry.querySelector('.rating-stars');
+                        const stars = ratingStars.querySelectorAll('.rating-star');
+                        
+                        // Update stars
+                        stars.forEach(star => {
+                            const starRating = parseInt(star.dataset.rating);
+                            if (starRating <= rating) {
+                                star.classList.remove('bi-star');
+                                star.classList.add('bi-star-fill');
+                            }
+                        });
+                        
+                        // Store the rating value
+                        ratingStars.dataset.rating = rating;
+                    }
                 });
             }
-        }, 300);
+        }
     }
     
     // Display general preference suggestions from AI
@@ -1037,28 +1039,16 @@ function initializeChat() {
     
     // Add a destination to general preferences
     function addDestinationToGeneralPreferences(airport, rating) {
-        // First set the rating in the preference manager
-        const result = PreferenceManager.setRating(airport, rating);
-        
-        // Check if this destination already exists in the UI
-        const existingPref = findExistingDestinationPreference(airport);
-        if (existingPref) {
-            // Update the existing preference rather than creating a new one
-            console.log(`Found existing preference for ${airport}, updating rating to ${rating}`);
-            updateDestinationPreference(existingPref, rating);
-            return;
-        }
-        
-        // If not found in the UI, add a new preference element
-        console.log(`Adding new preference for ${airport} with rating ${rating}`);
-        
         // Add a new general preference
-        const newPref = addGeneralPreference();
+        addGeneralPreference();
         
-        // Get the newly added preference 
-        if (newPref) {
-            const typeSelect = newPref.querySelector('.preference-type');
-            const valueInput = newPref.querySelector('.preference-value');
+        // Get the newly added preference (last one)
+        const prefItems = document.querySelectorAll('.general-preference-item');
+        const lastItem = prefItems[prefItems.length - 1];
+        
+        if (lastItem) {
+            const typeSelect = lastItem.querySelector('.preference-type');
+            const valueInput = lastItem.querySelector('.preference-value');
             
             // Set to preferred destination
             typeSelect.value = 'preferred_destination';
@@ -1069,86 +1059,49 @@ function initializeChat() {
             
             // Set the rating
             setTimeout(() => {
-                const ratingStars = newPref.querySelector('.general-rating-stars');
+                const ratingStars = lastItem.querySelector('.general-rating-stars');
                 if (ratingStars) {
-                    ratingStars.dataset.rating = rating;
-                    
-                    // Update the UI to reflect the rating
-                    updateDestinationPreference(newPref, rating);
-                }
-            }, 50); // Small delay to ensure stars are rendered
-        }
-    }
-
-    // Add a recommendation as a preference to a specific traveler
-    function addPreferenceToTraveler(travelerIndex, airport, rating) {
-        const travelerElements = document.querySelectorAll('.traveler-entry');
-        const travelerEl = travelerElements[travelerIndex];
-        
-        if (travelerEl) {
-            // Add a new preference to this traveler
-            const preferencesContainer = travelerEl.querySelector('.preferences-list');
-            
-            // First check if there's already a preference for this airport
-            const existingPrefEntries = travelerEl.querySelectorAll('.preference-entry');
-            let preferenceExists = false;
-            
-            existingPrefEntries.forEach(entry => {
-                const destSelect = entry.querySelector('.preference-destination');
-                if (destSelect && destSelect.value === airport) {
-                    // Update the existing preference rating
-                    const ratingStars = entry.querySelector('.rating-stars');
                     const stars = ratingStars.querySelectorAll('.rating-star');
+                    const ratingValue = parseInt(rating);
                     
-                    // Reset the stars
+                    // Reset all stars first
                     stars.forEach(star => {
                         star.classList.remove('bi-star-fill');
                         star.classList.add('bi-star');
                     });
                     
-                    // Fill the appropriate number
-                    for (let i = 0; i < stars.length && i < rating; i++) {
-                        stars[i].classList.remove('bi-star');
-                        stars[i].classList.add('bi-star-fill');
+                    // For negative ratings, show special indicator
+                    if (ratingValue < 0) {
+                        // Add negative indicator
+                        ratingStars.classList.add('negative-rating');
+                        const negativeIndicator = document.createElement('span');
+                        negativeIndicator.className = 'negative-indicator text-danger ms-2';
+                        negativeIndicator.textContent = '(Disliked)';
+                        ratingStars.appendChild(negativeIndicator);
+                    } else {
+                        // For positive ratings, fill stars up to the rating
+                        const absRating = Math.abs(ratingValue);
+                        for (let i = 0; i < stars.length; i++) {
+                            const starPosition = i + 1;
+                            if (starPosition <= absRating) {
+                                stars[i].classList.remove('bi-star');
+                                stars[i].classList.add('bi-star-fill');
+                            }
+                        }
                     }
                     
-                    // Store the rating value
-                    ratingStars.dataset.rating = rating;
-                    preferenceExists = true;
+                    // Store the rating
+                    ratingStars.dataset.rating = ratingValue;
+                    
+                    // Add a numerical rating for clarity
+                    const ratingDisplay = document.createElement('span');
+                    ratingDisplay.className = 'numerical-rating badge bg-secondary ms-2';
+                    ratingDisplay.textContent = `Rating: ${ratingValue}`;
+                    lastItem.appendChild(ratingDisplay);
+                    
+                    console.log(`Added new preference for ${airport} with rating ${ratingValue}, dataset value: ${ratingStars.dataset.rating}`);
                 }
-            });
-            
-            // If the preference doesn't exist yet, create a new one
-            if (!preferenceExists) {
-                addPreference(travelerEl).then(() => {
-                    // Get the newly added preference entry (it's the last one)
-                    const newPrefEntry = travelerEl.querySelector('.preferences-list .preference-entry:last-child');
-                    if (newPrefEntry) {
-                        // Set the destination
-                        const destSelect = newPrefEntry.querySelector('.preference-destination');
-                        destSelect.value = airport;
-                        
-                        // Set the rating
-                        const ratingStars = newPrefEntry.querySelector('.rating-stars');
-                        const stars = ratingStars.querySelectorAll('.rating-star');
-                        
-                        // Reset the stars
-                        stars.forEach(star => {
-                            star.classList.remove('bi-star-fill');
-                            star.classList.add('bi-star');
-                        });
-                        
-                        // Fill the appropriate number
-                        for (let i = 0; i < stars.length && i < rating; i++) {
-                            stars[i].classList.remove('bi-star');
-                            stars[i].classList.add('bi-star-fill');
-                        }
-                        
-                        // Store the rating value
-                        ratingStars.dataset.rating = rating;
-                    }
-                });
-            }
+            }, 50); // Small delay to ensure stars are rendered
         }
     }
 }
@@ -1461,32 +1414,22 @@ function addGeneralPreference() {
                 // Create rating stars for destination preferences
                 const ratingStarsDiv = document.createElement('div');
                 ratingStarsDiv.className = 'general-rating-stars mt-2';
-                ratingStarsDiv.dataset.rating = '3'; // Default to 3 stars
                 
-                // Create 5 stars with explicit index-based IDs
-                for (let i = 0; i < 5; i++) {
-                    const starPosition = i + 1;
+                // Create 5 stars
+                for (let i = 1; i <= 5; i++) {
                     const star = document.createElement('i');
-                    // Set empty star by default
                     star.className = 'bi bi-star rating-star';
-                    star.dataset.position = starPosition;
-                    star.id = `star-${Date.now()}-${i}`; // Unique ID for each star
+                    star.dataset.rating = i;
+                    star.dataset.position = i;  // Store position for easier updates
                     star.style.cursor = 'pointer';
                     star.style.marginRight = '3px';
-                    
-                    // Fill in initial stars (default = 3)
-                    if (starPosition <= 3) {
-                        star.classList.remove('bi-star');
-                        star.classList.add('bi-star-fill');
-                    }
                     
                     // Add click event for stars
                     star.addEventListener('click', function() {
                         const stars = ratingStarsDiv.querySelectorAll('.rating-star');
-                        const clickedPosition = parseInt(this.dataset.position);
-                        console.log(`Star clicked: position ${clickedPosition}`);
+                        const clickedRating = parseInt(this.dataset.position);
                         
-                        // Reset all stars
+                        // Reset all stars first
                         stars.forEach(s => {
                             s.classList.remove('bi-star-fill');
                             s.classList.add('bi-star');
@@ -1495,14 +1438,14 @@ function addGeneralPreference() {
                         // Fill stars up to clicked position
                         stars.forEach(s => {
                             const pos = parseInt(s.dataset.position);
-                            if (pos <= clickedPosition) {
+                            if (pos <= clickedRating) {
                                 s.classList.remove('bi-star');
                                 s.classList.add('bi-star-fill');
                             }
                         });
                         
                         // Store the rating in a data attribute
-                        ratingStarsDiv.dataset.rating = clickedPosition;
+                        ratingStarsDiv.dataset.rating = clickedRating;
                         
                         // Remove any existing numerical rating
                         const existingRating = parentElement.querySelector('.numerical-rating');
@@ -1513,26 +1456,17 @@ function addGeneralPreference() {
                         // Add a numerical rating for clarity
                         const ratingDisplay = document.createElement('span');
                         ratingDisplay.className = 'numerical-rating badge bg-secondary ms-2';
-                        ratingDisplay.textContent = `Rating: ${clickedPosition}`;
+                        ratingDisplay.textContent = `Rating: ${clickedRating}`;
                         parentElement.appendChild(ratingDisplay);
                         
-                        console.log(`User clicked star ${clickedPosition}, updated rating to ${ratingStarsDiv.dataset.rating}`);
+                        console.log(`User clicked star ${clickedRating}, updated rating to ${ratingStarsDiv.dataset.rating}`);
                     });
                     
                     ratingStarsDiv.appendChild(star);
                 }
                 
-                // Add a numerical rating display initially
-                const ratingDisplay = document.createElement('span');
-                ratingDisplay.className = 'numerical-rating badge bg-secondary ms-2';
-                ratingDisplay.textContent = `Rating: 3`;
-                
-                // Insert rating stars after input
+                // Insert after input
                 valueInput.parentNode.insertBefore(ratingStarsDiv, valueInput.nextSibling);
-                
-                // Insert rating display after the stars
-                parentElement.appendChild(ratingDisplay);
-                
                 break;
         }
     });
@@ -1541,8 +1475,6 @@ function addGeneralPreference() {
     typeSelect.dispatchEvent(new Event('change'));
 
     preferencesContainer.appendChild(preferenceNode);
-    
-    return preferenceNode; // Return the created node for chaining
 }
 
 // Add preference to traveler
@@ -1563,6 +1495,89 @@ async function addPreference(travelerEntry) {
     });
     
     preferencesContainer.appendChild(preferenceNode);
+}
+
+// Apply preference modifications from the Chat API
+function applyPreferenceModifications(modifications) {
+    console.log("Applying preference modifications:", modifications);
+    
+    if (!modifications || modifications.length === 0) {
+        console.log("No modifications to apply");
+        return;
+    }
+    
+    // Track modified items for UI feedback
+    const modifiedItems = [];
+    
+    // First pass: Update existing preferences
+    let appliedModifications = 0;
+    
+    modifications.forEach(mod => {
+        console.log(`Processing modification for ${mod.type}: ${mod.value} (Rating: ${mod.rating})`);
+        
+        if (mod.type === 'preferred_destination') {
+            // Check if this destination already exists in general preferences
+            const existingPref = findExistingDestinationPreference(mod.value);
+            
+            if (existingPref) {
+                console.log(`Updating existing preference for ${mod.value} to rating ${mod.rating}`);
+                // Update existing preference
+                updateDestinationPreference(existingPref, mod.rating);
+                appliedModifications++;
+                modifiedItems.push(existingPref);
+            } else {
+                console.log(`Adding new preference for ${mod.value} with rating ${mod.rating}`);
+                // Add as new preference
+                addDestinationToGeneralPreferences(mod.value, mod.rating);
+                appliedModifications++;
+                
+                // Find the newly added preference
+                setTimeout(() => {
+                    const newPref = findExistingDestinationPreference(mod.value);
+                    if (newPref) {
+                        modifiedItems.push(newPref);
+                    }
+                }, 100);
+            }
+        } else {
+            // Handle other types of preferences
+            const existingPref = findExistingGeneralPreference(mod.type, mod.value);
+            
+            if (existingPref) {
+                console.log(`Updating existing general preference: ${mod.type} - ${mod.value}`);
+                // Update existing preference
+                updateGeneralPreference(existingPref, mod.value, mod.sentiment);
+                appliedModifications++;
+                modifiedItems.push(existingPref);
+            } else {
+                console.log(`Adding new general preference: ${mod.type} - ${mod.value}`);
+                // Add as new preference
+                addToGeneralPreferences(mod.type, mod.value);
+                appliedModifications++;
+            }
+        }
+    });
+    
+    console.log(`Applied ${appliedModifications} preference modifications`);
+    
+    // Scroll to the recently updated preferences
+    setTimeout(() => {
+        const updatedContainer = document.getElementById('recentlyUpdatedPreferences');
+        if (updatedContainer) {
+            updatedContainer.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        } else if (modifiedItems.length > 0) {
+            // If there's no recently updated container, scroll to the first modified item
+            modifiedItems[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+            
+            // Add a temporary highlight class
+            modifiedItems.forEach(item => {
+                item.classList.add('preference-updated');
+                setTimeout(() => {
+                    item.classList.remove('preference-updated');
+                }, 5000);
+            });
+        }
+    }, 300);
 }
 
 // Find an existing destination preference in general preferences
@@ -1611,61 +1626,12 @@ function findExistingGeneralPreference(type, value) {
     return null;
 }
 
-// Debug function to understand star structure
-function inspectStarDOM(element) {
-    console.log("======= DOM INSPECTION =======");
-    
-    // First, let's see what element we're working with
-    console.log("Element:", element);
-    
-    // Check the direct star elements - they should contain rating-star
-    const stars = element.querySelectorAll('.rating-star');
-    console.log(`Found ${stars.length} direct stars:`, stars);
-    
-    // Log each star with its properties
-    stars.forEach((star, idx) => {
-        console.log(`Star ${idx+1}:`, {
-            classes: star.className,
-            dataRating: star.dataset.rating,
-            dataPosition: star.dataset.position,
-            isFilled: star.classList.contains('bi-star-fill'),
-            isEmpty: star.classList.contains('bi-star')
-        });
-    });
-    
-    // Look at the parent element of stars
-    const ratingStars = element.querySelector('.general-rating-stars');
-    if (ratingStars) {
-        console.log("Rating stars container:", ratingStars);
-        console.log("Rating stars dataset:", ratingStars.dataset);
-        console.log("Rating stored in dataset:", ratingStars.dataset.rating);
-    } else {
-        console.log("Could not find .general-rating-stars container");
-    }
-    
-    // Check if there's a numerical rating display
-    const numRating = element.querySelector('.numerical-rating');
-    if (numRating) {
-        console.log("Numerical rating element:", numRating);
-        console.log("Numerical rating text:", numRating.textContent);
-    }
-    
-    console.log("============================");
-}
-
 // Update an existing destination preference
-function updateDestinationPreference(preferenceItem, newRating, originalRating, adjustment) {
-    console.log(`DEBUG: Updating preference to rating ${newRating} from ${originalRating} ${adjustment || ""}`);
-    
-    // First, inspect the DOM to understand what we're working with
-    inspectStarDOM(preferenceItem);
-    
+function updateDestinationPreference(preferenceItem, newRating) {
     const ratingStars = preferenceItem.querySelector('.general-rating-stars');
     
     if (ratingStars) {
-        // Get all stars
         const stars = ratingStars.querySelectorAll('.rating-star');
-        console.log(`DEBUG: Found ${stars.length} stars`);
         
         // Remove any existing negative indicator
         const existingNegativeIndicator = ratingStars.querySelector('.negative-indicator');
@@ -1677,18 +1643,6 @@ function updateDestinationPreference(preferenceItem, newRating, originalRating, 
         const existingUpdateIndicator = preferenceItem.querySelector('.update-indicator');
         if (existingUpdateIndicator) {
             existingUpdateIndicator.remove();
-        }
-        
-        // Remove existing numerical rating
-        const existingRating = preferenceItem.querySelector('.numerical-rating');
-        if (existingRating) {
-            existingRating.remove();
-        }
-        
-        // Remove existing adjustment indicator
-        const existingAdjustment = preferenceItem.querySelector('.adjustment-indicator');
-        if (existingAdjustment) {
-            existingAdjustment.remove();
         }
         
         // Remove negative class if it exists
@@ -1712,49 +1666,32 @@ function updateDestinationPreference(preferenceItem, newRating, originalRating, 
             // Store the negative rating
             ratingStars.dataset.rating = newRating;
             
-            console.log(`DEBUG: Set negative rating ${newRating}`);
+            // Add debug output
+            console.log(`Updated ${preferenceItem.querySelector('.preference-value').value} to negative rating: ${newRating}`);
         } else {
             // For positive ratings, update stars as usual
             const absRating = Math.abs(newRating);
             
-            // Log current star states before changing
-            console.log("DEBUG: Before update, star states:");
-            stars.forEach((star, idx) => {
-                console.log(`Star ${idx+1}: ${star.classList.contains('bi-star-fill') ? 'filled' : 'empty'}`);
+            // Reset all stars first
+            stars.forEach(star => {
+                star.classList.remove('bi-star-fill');
+                star.classList.add('bi-star');
             });
             
-            // DIRECT APPROACH: Explicitly manipulate each star by index
-            for (let i = 0; i < stars.length; i++) {
-                // Make all stars empty first
-                stars[i].classList.remove('bi-star-fill');
-                stars[i].classList.add('bi-star');
-                
-                // Then selectively fill the right number
-                if (i < absRating) {
-                    console.log(`Filling star at index ${i}`);
-                    stars[i].classList.remove('bi-star');
-                    stars[i].classList.add('bi-star-fill');
+            // Fill in stars up to the rating
+            stars.forEach((star, index) => {
+                const starPosition = index + 1; // Star positions are 1-based
+                if (starPosition <= absRating) {
+                    star.classList.remove('bi-star');
+                    star.classList.add('bi-star-fill');
                 }
-            }
-            
-            // Force redraw by removing and re-adding all stars
-            const starsArray = Array.from(stars);
-            starsArray.forEach(star => {
-                const parent = star.parentNode;
-                const starClone = star.cloneNode(true);
-                parent.replaceChild(starClone, star);
             });
             
-            // Store the rating as a data attribute
+            // Store the rating
             ratingStars.dataset.rating = newRating;
-            console.log(`DEBUG: Set rating attribute to ${newRating}, filled ${absRating} stars`);
             
-            // Log after update
-            const updatedStars = ratingStars.querySelectorAll('.rating-star');
-            console.log("DEBUG: After update, star states:");
-            updatedStars.forEach((star, idx) => {
-                console.log(`Star ${idx+1}: ${star.classList.contains('bi-star-fill') ? 'filled' : 'empty'}`);
-            });
+            // Add debug output
+            console.log(`Updated ${preferenceItem.querySelector('.preference-value').value} to positive rating: ${newRating}, filling ${absRating} stars`);
         }
         
         // Add a visual update indicator with timestamp
@@ -1770,16 +1707,6 @@ function updateDestinationPreference(preferenceItem, newRating, originalRating, 
         ratingDisplay.textContent = `Rating: ${newRating}`;
         preferenceItem.appendChild(ratingDisplay);
         
-        // Add adjustment indicator if available
-        if (adjustment) {
-            const adjustmentDisplay = document.createElement('span');
-            adjustmentDisplay.className = adjustment.includes('+') ? 
-                'adjustment-indicator badge bg-success ms-2' : 
-                'adjustment-indicator badge bg-danger ms-2';
-            adjustmentDisplay.textContent = adjustment;
-            preferenceItem.appendChild(adjustmentDisplay);
-        }
-        
         // Add highlight effect to the preference item
         preferenceItem.style.backgroundColor = '#f0f8ff'; // Light blue background
         preferenceItem.style.transition = 'background-color 2s';
@@ -1788,22 +1715,18 @@ function updateDestinationPreference(preferenceItem, newRating, originalRating, 
         preferenceItem.style.padding = '5px';
         
         // Add to recently updated list for UI visibility
-        addToRecentlyUpdated(preferenceItem.querySelector('.preference-value').value, newRating, originalRating, adjustment);
+        addToRecentlyUpdated(preferenceItem.querySelector('.preference-value').value, newRating);
         
         // Reset background after 5 seconds
         setTimeout(() => {
             preferenceItem.style.backgroundColor = '';
             preferenceItem.style.border = '';
         }, 5000);
-        
-        // Inspect DOM after changes
-        console.log("AFTER UPDATE:");
-        inspectStarDOM(preferenceItem);
     }
 }
 
 // Function to maintain and display recently updated preferences
-function addToRecentlyUpdated(destination, rating, originalRating, adjustment) {
+function addToRecentlyUpdated(destination, rating) {
     // Create or get the recently updated container
     let updatedContainer = document.getElementById('recentlyUpdatedPreferences');
     if (!updatedContainer) {
@@ -1873,24 +1796,11 @@ function addToRecentlyUpdated(destination, rating, originalRating, adjustment) {
     const now = new Date();
     const timeString = now.toLocaleTimeString();
     
-    // Create content based on if we have original rating
-    let contentHTML = '';
-    if (originalRating && adjustment) {
-        let adjustmentClass = adjustment.includes('+') ? 'text-success' : 'text-danger';
-        contentHTML = `
-            ${icon.outerHTML}
-            <div>Updated <strong>${destination}</strong> from rating ${originalRating} to ${rating}/5 
-            <span class="${adjustmentClass}">(${adjustment})</span> at ${timeString}</div>
-        `;
-    } else {
-        contentHTML = `
-            ${icon.outerHTML}
-            <div>Updated <strong>${destination}</strong> with rating ${rating}/5 at ${timeString}</div>
-        `;
-    }
-    
     // Set content
-    updateEntry.innerHTML = contentHTML;
+    updateEntry.innerHTML = `
+        ${icon.outerHTML}
+        <div>Updated <strong>${destination}</strong> with rating ${rating}/5 at ${timeString}</div>
+    `;
     
     // Add dismiss button
     const dismissBtn = document.createElement('button');
@@ -1947,213 +1857,4 @@ function updateGeneralPreference(preferenceItem, newValue, sentiment) {
         
         valueInput.parentNode.appendChild(indicator);
     }
-}
-
-// Function to fix existing ratings on the page
-function fixAllRatingDisplay() {
-    console.log("Applying fixes to all rating displays on the page");
-    
-    // Find all rating star containers
-    const allRatingContainers = document.querySelectorAll('.general-rating-stars');
-    console.log(`Found ${allRatingContainers.length} rating containers to fix`);
-    
-    // Fix each one
-    allRatingContainers.forEach((container, idx) => {
-        const storedRating = parseInt(container.dataset.rating || '3');
-        const stars = container.querySelectorAll('.rating-star');
-        const containerParent = container.closest('.general-preference-item');
-        const destinationCode = containerParent ? containerParent.querySelector('.preference-value').value : 'unknown';
-        
-        console.log(`Container ${idx+1} for ${destinationCode} has rating: ${storedRating}, with ${stars.length} stars`);
-        
-        // First reset all stars to empty
-        stars.forEach(star => {
-            star.classList.remove('bi-star-fill');
-            star.classList.add('bi-star');
-        });
-        
-        // Then fill the appropriate number
-        const absRating = Math.abs(storedRating);
-        if (storedRating > 0) {
-            for (let i = 0; i < absRating && i < stars.length; i++) {
-                stars[i].classList.remove('bi-star');
-                stars[i].classList.add('bi-star-fill');
-                console.log(`Fixed: Filled star ${i+1} for ${destinationCode}`);
-            }
-        }
-    });
-}
-
-// Add a button to the UI to manually trigger the fix
-function addFixButton() {
-    // Check if button already exists
-    if (document.getElementById('fixRatingsButton')) {
-        return;
-    }
-    
-    const button = document.createElement('button');
-    button.id = 'fixRatingsButton';
-    button.className = 'btn btn-warning mb-3';
-    button.innerHTML = 'Fix Star Ratings Display';
-    button.style.position = 'fixed';
-    button.style.bottom = '10px';
-    button.style.right = '10px';
-    button.style.zIndex = '1000';
-    
-    button.addEventListener('click', function() {
-        fixAllRatingDisplay();
-    });
-    
-    document.body.appendChild(button);
-}
-
-// Inject a hotkey to fix ratings: Ctrl+Alt+F
-document.addEventListener('keydown', function(e) {
-    if (e.ctrlKey && e.altKey && e.key === 'f') {
-        console.log("Hot key pressed - fixing all ratings");
-        fixAllRatingDisplay();
-    }
-});
-
-// Global preference manager to track ratings persistently
-const PreferenceManager = {
-    preferences: {},
-    
-    // Initialize from localStorage
-    init: function() {
-        try {
-            const savedPrefs = localStorage.getItem('travelPreferences');
-            if (savedPrefs) {
-                this.preferences = JSON.parse(savedPrefs);
-                console.log('Loaded preferences from storage:', this.preferences);
-            }
-        } catch (error) {
-            console.error('Error loading preferences from storage:', error);
-            this.preferences = {};
-        }
-    },
-    
-    // Save to localStorage
-    save: function() {
-        try {
-            localStorage.setItem('travelPreferences', JSON.stringify(this.preferences));
-            console.log('Saved preferences to storage:', this.preferences);
-        } catch (error) {
-            console.error('Error saving preferences to storage:', error);
-        }
-    },
-    
-    // Get a preference rating
-    getRating: function(destination) {
-        destination = destination.trim().toUpperCase();
-        return this.preferences[destination] || 3; // Default to 3 stars
-    },
-    
-    // Increment a preference rating
-    incrementRating: function(destination, amount = 1) {
-        destination = destination.trim().toUpperCase();
-        const currentRating = this.getRating(destination);
-        const newRating = Math.min(5, currentRating + amount); // Cap at 5
-        this.preferences[destination] = newRating;
-        this.save();
-        console.log(`Incremented ${destination} from ${currentRating} to ${newRating}`);
-        return {
-            oldRating: currentRating,
-            newRating: newRating,
-            destination: destination
-        };
-    },
-    
-    // Decrement a preference rating
-    decrementRating: function(destination, amount = 1) {
-        destination = destination.trim().toUpperCase();
-        const currentRating = this.getRating(destination);
-        const newRating = Math.max(-5, currentRating - amount); // Floor at -5
-        this.preferences[destination] = newRating;
-        this.save();
-        console.log(`Decremented ${destination} from ${currentRating} to ${newRating}`);
-        return {
-            oldRating: currentRating,
-            newRating: newRating,
-            destination: destination
-        };
-    },
-    
-    // Set a preference rating directly
-    setRating: function(destination, rating) {
-        destination = destination.trim().toUpperCase();
-        const currentRating = this.getRating(destination);
-        this.preferences[destination] = rating;
-        this.save();
-        console.log(`Set ${destination} from ${currentRating} to ${rating}`);
-        return {
-            oldRating: currentRating,
-            newRating: rating,
-            destination: destination
-        };
-    },
-    
-    // Check if an airport is in the positive suggestions list
-    isAirportRecommended: function(airport, recommendationsList) {
-        return recommendationsList && Object.keys(recommendationsList).includes(airport.trim().toUpperCase());
-    },
-    
-    // Check if an airport is in the avoid list
-    isAirportToAvoid: function(airport, avoidList) {
-        return avoidList && Object.keys(avoidList).includes(airport.trim().toUpperCase());
-    },
-    
-    // Update airport ratings based on API recommendations
-    updateAirportRatings: function(recommendationsList, avoidList) {
-        console.log("Updating airport ratings based on API recommendations");
-        
-        // Process all stored airport preferences
-        for (const [airport, rating] of Object.entries(this.preferences)) {
-            // Only process if it's an airport code (usually 3 letters)
-            if (airport.length === 3) {
-                if (this.isAirportRecommended(airport, recommendationsList)) {
-                    this.incrementRating(airport, 1);
-                    console.log(`${airport} is in recommendation list, increased rating`);
-                } else if (this.isAirportToAvoid(airport, avoidList)) {
-                    this.decrementRating(airport, 2);
-                    console.log(`${airport} is in avoid list, decreased rating`);
-                }
-            }
-        }
-        
-        // After updating all ratings, save to localStorage
-        this.save();
-        
-        // Update UI to reflect changes
-        this.syncUI();
-    },
-    
-    // Sync UI with current ratings
-    syncUI: function() {
-        console.log("Syncing UI with stored preferences");
-        
-        // Sync all destination preferences in the UI
-        const prefItems = document.querySelectorAll('.general-preference-item');
-        
-        prefItems.forEach(item => {
-            const typeSelect = item.querySelector('.preference-type');
-            if (typeSelect && typeSelect.value === 'preferred_destination') {
-                const valueInput = item.querySelector('.preference-value');
-                if (valueInput) {
-                    const destination = valueInput.value.trim().toUpperCase();
-                    const currentRating = this.getRating(destination);
-                    
-                    // Update the UI to reflect the current rating
-                    const ratingStars = item.querySelector('.general-rating-stars');
-                    if (ratingStars) {
-                        // Update the stored rating
-                        ratingStars.dataset.rating = currentRating;
-                        
-                        // Update the visual display
-                        updateDestinationPreference(item, currentRating);
-                    }
-                }
-            }
-        });
-    }
-}; 
+} 
