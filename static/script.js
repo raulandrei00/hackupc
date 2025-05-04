@@ -666,7 +666,7 @@ function displayResults(destinations) {
     }
     
     // Create result elements
-    destinations.forEach(destination => {
+    destinations.forEach((destination, index) => {
         const template = document.getElementById('destinationResultTemplate');
         const resultElement = document.importNode(template.content, true).querySelector('.destination-result');
         
@@ -684,13 +684,25 @@ function displayResults(destinations) {
         // Format score - now higher is better (0-1 scale, showing as 0-100%)
         const scoreDisplay = score === 'N/A' ? 'N/A' : `${Math.round(score * 100)}%`;
         
+        // Set the header and score
         resultElement.querySelector('.destination-header').innerHTML = 
-            `${destCode} - ${destName} (Score: ${scoreDisplay})${preferenceText}`;
+            `${destName} (${destCode})${preferenceText}`;
+        
+        resultElement.querySelector('.destination-score').textContent = 
+            `Match Score: ${scoreDisplay}`;
+        
+        // Set position indicator if it's the best match
+        if (index === 0) {
+            const badge = document.createElement('span');
+            badge.className = 'best-match-badge';
+            badge.innerHTML = '<i class="bi bi-award-fill me-1"></i>Best Match';
+            resultElement.querySelector('.destination-banner').appendChild(badge);
+        }
             
         // Set cost and emissions
         resultElement.querySelector('.total-cost').textContent = formatCurrency(destination.total_cost || 0);
         resultElement.querySelector('.avg-cost').textContent = formatCurrency(destination.average_cost || 0);
-        resultElement.querySelector('.emissions').textContent = `${Math.round((destination.total_emissions || 0) * 100) / 100} kg CO₂`;
+        resultElement.querySelector('.emissions').textContent = `${Math.round((destination.total_emissions || 0) * 100) / 100} kg`;
         
         // Add flight plans
         const flightPlansContainer = resultElement.querySelector('.flight-plans');
@@ -706,19 +718,31 @@ function displayResults(destinations) {
                 
                 // Set flight details
                 if (plan.price > 0) {  // Skip if it's "already there" (price = 0)
-                    flightElement.querySelector('.flight-airline').textContent = `${plan.airline || 'Unknown'} ${plan.flight_number ? `(${plan.flight_number})` : ''}`;
+                    flightElement.querySelector('.flight-airline').textContent = plan.airline || 'Unknown';
+                    flightElement.querySelector('.flight-number').textContent = plan.flight_number || 'N/A';
                     flightElement.querySelector('.flight-price').textContent = formatCurrency(plan.price || 0);
                     flightElement.querySelector('.flight-departure').textContent = plan.departure ? formatDateTime(plan.departure) : 'N/A';
                     flightElement.querySelector('.flight-arrival').textContent = plan.arrival ? formatDateTime(plan.arrival) : 'N/A';
-                    flightElement.querySelector('.flight-duration').lastChild.textContent = plan.duration_minutes ? formatDuration(plan.duration_minutes) : 'N/A';
-                    flightElement.querySelector('.flight-emissions').textContent = `Emissions: ${Math.round((plan.emissions_kg || 0) * 100) / 100} kg CO₂`;
+                    flightElement.querySelector('.origin-code').textContent = plan.origin || 'N/A';
+                    flightElement.querySelector('.destination-code').textContent = destCode || 'N/A';
+                    flightElement.querySelector('.duration-value').textContent = plan.duration_minutes ? formatDuration(plan.duration_minutes) : 'N/A';
+                    flightElement.querySelector('.emissions-value').textContent = `${Math.round((plan.emissions_kg || 0) * 100) / 100} kg CO₂`;
+                    
+                    // Style for better appearance
+                    if (plan.airline.toLowerCase().includes('eco') || (plan.emissions_kg && plan.emissions_kg < 100)) {
+                        flightElement.classList.add('eco-flight');
+                    }
                 } else {
                     flightElement.querySelector('.flight-airline').textContent = 'Already at destination';
                     flightElement.querySelector('.flight-price').textContent = '$0';
                     flightElement.querySelector('.flight-departure').textContent = 'N/A';
                     flightElement.querySelector('.flight-arrival').textContent = 'N/A';
-                    flightElement.querySelector('.flight-duration').lastChild.textContent = '0h 0m';
-                    flightElement.querySelector('.flight-emissions').textContent = 'Emissions: 0 kg CO₂';
+                    flightElement.querySelector('.origin-code').textContent = plan.origin || 'N/A';
+                    flightElement.querySelector('.destination-code').textContent = destCode || 'N/A';
+                    flightElement.querySelector('.duration-value').textContent = '0h 0m';
+                    flightElement.querySelector('.emissions-value').textContent = '0 kg CO₂';
+                    flightElement.querySelector('.flight-badge').innerHTML = '<i class="bi bi-geo-alt me-1"></i><span>Local</span>';
+                    flightElement.classList.add('local-traveler');
                 }
                 
                 flightPlansContainer.appendChild(flightElement);
@@ -735,7 +759,7 @@ function displayResults(destinations) {
         destinationResults.appendChild(resultElement);
     });
     
-    // Show results container
+    // Show results container with animation
     resultsContainer.classList.remove('d-none');
     
     // Scroll to results
