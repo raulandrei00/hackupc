@@ -512,14 +512,46 @@ def calculate_scores(
     for dest in destinations:
         dest_code = dest.destination_code
         
-        # Default preference value (neutral)
+        # Start with default preference value (neutral)
         preference_scores[dest_code] = 0.5
         
-        # Check if we have a general preference for this destination
+        # First check if we have a general preference for this destination
         if dest_code in general_destination_preferences:
             # Get the general preference value (0-1 scale)
             # Now HIGHER values are BETTER, so we use the value directly
             preference_scores[dest_code] = general_destination_preferences[dest_code]
+            
+        # Also check for individual traveler preferences for this destination
+        # Collect all individual preferences for this destination
+        traveler_preferences = []
+        for flight_plan in dest.flight_plans:
+            traveler = flight_plan.traveler
+            if dest_code in traveler.preferences:
+                # Convert from 1-5 scale to 0-1 scale
+                pref_value = traveler.preferences[dest_code] / 5.0
+                traveler_preferences.append(pref_value)
+                logger.info(f"Found individual preference for {dest_code} from {traveler.name}: {pref_value:.2f}")
+                
+        # If we have individual preferences, incorporate them
+        if traveler_preferences:
+            # Calculate the average individual preference
+            avg_individual_pref = sum(traveler_preferences) / len(traveler_preferences)
+            
+            # Combine general and individual preferences (give more weight to individual)
+            if dest_code in general_destination_preferences:
+                # 90% individual, 10% general - makes individual preferences much more impactful
+                combined_pref = (avg_individual_pref * 0.9) + (preference_scores[dest_code] * 0.1)
+                # If individual preference is very different from global, make it even more dominant
+                if abs(avg_individual_pref - preference_scores[dest_code]) > 0.4:  
+                    # Even stronger weight to individual preference (95%)
+                    combined_pref = (avg_individual_pref * 0.95) + (preference_scores[dest_code] * 0.05)
+                    logger.info(f"Large difference between individual and general preferences for {dest_code}, giving 95% weight to individual")
+            else:
+                # No general preference, use individual
+                combined_pref = avg_individual_pref
+                
+            preference_scores[dest_code] = combined_pref
+            logger.info(f"Combined preference for {dest_code}: {combined_pref:.2f} (from {len(traveler_preferences)} individual preferences)")
     
     # Find max and min preference scores
     if preference_scores:
@@ -559,7 +591,7 @@ def calculate_scores(
         # Normalize preference (0-1 scale, higher is better)
         # Special handling for avoided destinations
         if raw_pref <= 0.05:
-            # This is an avoided destination - keep its low score
+            # This is an avoided destination - force absolute minimum score
             norm_preference = 0.0
         elif max_pref > min_pref:
             # Only normalize if there's an actual range to normalize
@@ -602,10 +634,11 @@ def calculate_scores(
                 (preference_weight * norm_preference)
             )
         
-        # Strongly penalize avoided destinations - ensure they rank at the bottom
+        # Apply moderate penalty to destinations with low preference scores
         if raw_pref <= 0.05:
-            weighted_score = weighted_score * 0.1  # Apply a strong penalty
-            logger.info(f"Applied strong penalty to avoided destination {dest_code}")
+            # Apply a 30% penalty instead of 99% - create difference without complete elimination
+            weighted_score = weighted_score * 0.7
+            logger.info(f"Applied moderate penalty to low-preference destination {dest_code}")
         
         # Store score in the destination object
         # Note: We've changed from "lower is better" to "higher is better"

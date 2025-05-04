@@ -280,8 +280,8 @@ Make sure to ONLY suggest destinations from the AVAILABLE DESTINATIONS list abov
             # Apply negative preference for destinations to avoid
             for code in destinations_to_avoid:
                 if code in app.preference_value:
-                    # Increase penalty: decrease preference value more dramatically (but don't go below -10)
-                    app.preference_value[code] = max(-10, app.preference_value[code] - 5)
+                    # Apply a more moderate penalty - decrease by 2 instead of 5
+                    app.preference_value[code] = max(-5, app.preference_value[code] - 2)
                     print(f"Decreased preference for avoided {code} to {app.preference_value[code]}")
                 else:
                     print(f"Warning: Destination {code} not found in preference tracking")
@@ -341,6 +341,16 @@ def find_destinations():
         # Convert from list of objects to set of codes for easier lookup
         destinations_to_avoid = {d.get('code') for d in destinations_to_avoid if d.get('code')}
         
+        # Debug: Print avoid list
+        print(f"IMPORTANT - Destinations to avoid in this query: {destinations_to_avoid}")
+        
+        # Reset any global preferences if explicitly requested
+        reset_preferences = data.get('reset_preferences', False)
+        if reset_preferences:
+            print("Resetting all global preferences as requested")
+            for code in app.preference_value:
+                app.preference_value[code] = 0
+                
         # Validate data
         if not travelers_data or not candidate_destinations or not travel_date:
             return jsonify({'error': 'Missing required data'}), 400
@@ -353,6 +363,13 @@ def find_destinations():
                 # Convert preferences from the format {destination: rating}
                 if 'preferences' in t:
                     preferences = {dest: float(rating) for dest, rating in t.get('preferences', {}).items()}
+                    
+                    # Clear global preference counter for destinations not in this request
+                    # This ensures removed preferences take effect immediately
+                    for dest_code in app.preference_value.keys():
+                        if dest_code not in preferences and app.preference_value[dest_code] > 0:
+                            app.preference_value[dest_code] = max(0, app.preference_value[dest_code] - 1)
+                            print(f"Reduced global preference for {dest_code} to {app.preference_value[dest_code]} since it was removed")
                     
                     # Update global preference counter for highly rated destinations (≥3)
                     # This ensures the UI form updates global preferences just like the chat does
@@ -372,6 +389,15 @@ def find_destinations():
                 
                 traveler = Traveler(t['name'], t['origin'], preferences)
                 travelers.append(traveler)
+                
+                # Debug: Print what preferences are being set for this traveler
+                if preferences:
+                    print(f"Traveler {t['name']} preferences:")
+                    for dest, rating in preferences.items():
+                        print(f"  - {dest}: {rating:.1f}/5.0")
+                else:
+                    print(f"Traveler {t['name']} has no preferences set")
+                
         except KeyError as ke:
             return jsonify({'error': f'Missing required traveler data: {str(ke)}'}), 400
         except Exception as e:
@@ -384,21 +410,22 @@ def find_destinations():
                 # The key change: Now HIGHER scores are BETTER, so invert the scoring
                 # Higher preference_value should result in HIGHER scores (better ranking)
                 # For negative preference values (destinations to avoid), give very low scores
-                if app.preference_value[dest] < 0:
-                    # Map negative preferences (-10 to -1) to very low scores (0.0 to 0.05)
-                    # More negative = lower score
-                    # Make the penalty more severe for avoided destinations
-                    score = 0.05 * (10 + app.preference_value[dest]) / 10  # Maps -10 to 0.0, -1 to 0.045
-                    
-                    # For destinations explicitly marked to avoid in this session, make score even lower
-                    if dest in destinations_to_avoid:
-                        score = 0.0  # Force to absolute minimum
-                        print(f"Forcing avoided destination {dest} to minimum score 0.0")
+                if dest in destinations_to_avoid:
+                    # Apply a moderate penalty for avoided destinations, but don't completely eliminate them
+                    # This gives them a 20% score reduction rather than forcing to absolute minimum
+                    base_score = 0.4  # Slightly below neutral (0.5)
+                    print(f"Moderately penalizing explicitly avoided destination {dest} to {base_score}")
+                    score = base_score
+                elif app.preference_value[dest] < 0:
+                    # Map negative preferences (-10 to -1) to lower scores (0.3 to 0.45)
+                    # More negative = lower score but not drastically low
+                    score = 0.3 + (0.15 * (10 + app.preference_value[dest]) / 10)  # Maps -10 to 0.3, -1 to 0.435
                 elif app.preference_value[dest] > 0:
-                    # Map positive preferences (1 to many) to high scores (0.5 to 1.0)
-                    # Higher positive preference = higher score
-                    boost = min(1.0, app.preference_value[dest] * 0.25)
-                    score = 0.5 + (boost * 0.5)  # Maps 1 to 0.625, 4 to 1.0
+                    # Map positive preferences (1 to many) to higher scores (0.6 to 1.0)
+                    # Make the curve more aggressive so preferences have a stronger impact
+                    boost = min(0.4, (app.preference_value[dest] * 0.15))  # More impactful boost 
+                    score = 0.6 + boost  # Maps 1 to 0.75, 3+ to 1.0
+                    print(f"High preference for {dest}, giving score {score:.2f} with boost {boost:.2f}")
                 else:
                     # Neutral score (0) maps to 0.5
                     score = 0.5
@@ -492,6 +519,7 @@ def find_destinations():
 def get_airport_name(code):
     """Return a human-readable airport name for a given code."""
     airport_names = {
+        # North America
         "ATL": "Atlanta",
         "BOS": "Boston",
         "DEN": "Denver",
@@ -499,7 +527,73 @@ def get_airport_name(code):
         "JFK": "New York JFK",
         "MIA": "Miami",
         "ORD": "Chicago O'Hare",
-        "SFO": "San Francisco"
+        "SFO": "San Francisco",
+        "YYZ": "Toronto",
+        "YVR": "Vancouver",
+        "MEX": "Mexico City",
+        "CUN": "Cancun",
+        
+        # Europe
+        "LHR": "London",
+        "CDG": "Paris",
+        "FRA": "Frankfurt",
+        "AMS": "Amsterdam",
+        "MAD": "Madrid",
+        "BCN": "Barcelona",
+        "FCO": "Rome",
+        "MXP": "Milan",
+        "IST": "Istanbul",
+        "DME": "Moscow",
+        "CPH": "Copenhagen",
+        "ARN": "Stockholm",
+        "OSL": "Oslo",
+        "ZRH": "Zurich",
+        "VIE": "Vienna",
+        "LIS": "Lisbon",
+        "ATH": "Athens",
+        
+        # Asia
+        "PEK": "Beijing",
+        "PVG": "Shanghai",
+        "HKG": "Hong Kong",
+        "NRT": "Tokyo",
+        "KIX": "Osaka",
+        "ICN": "Seoul",
+        "SIN": "Singapore",
+        "BKK": "Bangkok",
+        "KUL": "Kuala Lumpur",
+        "DEL": "Delhi",
+        "BOM": "Mumbai",
+        "DXB": "Dubai",
+        "DOH": "Doha",
+        
+        # Australia/Oceania
+        "SYD": "Sydney",
+        "MEL": "Melbourne",
+        "BNE": "Brisbane",
+        "PER": "Perth",
+        "AKL": "Auckland",
+        "CHC": "Christchurch",
+        "NAN": "Nadi",
+        
+        # Africa
+        "JNB": "Johannesburg",
+        "CPT": "Cape Town",
+        "CAI": "Cairo",
+        "LOS": "Lagos",
+        "ACC": "Accra",
+        "NBO": "Nairobi",
+        "ADD": "Addis Ababa",
+        "CMN": "Casablanca",
+        
+        # South America
+        "GRU": "São Paulo",
+        "GIG": "Rio de Janeiro",
+        "EZE": "Buenos Aires",
+        "SCL": "Santiago",
+        "LIM": "Lima",
+        "BOG": "Bogotá",
+        "CCS": "Caracas"
     }
     return airport_names.get(code, f"Airport {code}")
 
@@ -507,14 +601,81 @@ def get_airport_name(code):
 def airport_codes():
     """Return a list of common airport codes."""
     common_airports = [
-        {"code": "ATL", "name": "Atlanta, USA"},
-        {"code": "BOS", "name": "Boston, USA"},
-        {"code": "DEN", "name": "Denver, USA"},
-        {"code": "LAX", "name": "Los Angeles, USA"},
-        {"code": "JFK", "name": "New York, USA"},
-        {"code": "MIA", "name": "Miami, USA"},
-        {"code": "ORD", "name": "Chicago, USA"},
-        {"code": "SFO", "name": "San Francisco, USA"}
+        # North America
+        {"code": "ATL", "name": "Atlanta, USA", "continent": "North America"},
+        {"code": "BOS", "name": "Boston, USA", "continent": "North America"},
+        {"code": "DEN", "name": "Denver, USA", "continent": "North America"},
+        {"code": "LAX", "name": "Los Angeles, USA", "continent": "North America"},
+        {"code": "JFK", "name": "New York, USA", "continent": "North America"},
+        {"code": "MIA", "name": "Miami, USA", "continent": "North America"},
+        {"code": "ORD", "name": "Chicago, USA", "continent": "North America"},
+        {"code": "SFO", "name": "San Francisco, USA", "continent": "North America"},
+        {"code": "YYZ", "name": "Toronto, Canada", "continent": "North America"},
+        {"code": "YVR", "name": "Vancouver, Canada", "continent": "North America"},
+        {"code": "MEX", "name": "Mexico City, Mexico", "continent": "North America"},
+        {"code": "CUN", "name": "Cancun, Mexico", "continent": "North America"},
+        
+        # Europe
+        {"code": "LHR", "name": "London, UK", "continent": "Europe"},
+        {"code": "CDG", "name": "Paris, France", "continent": "Europe"},
+        {"code": "FRA", "name": "Frankfurt, Germany", "continent": "Europe"},
+        {"code": "AMS", "name": "Amsterdam, Netherlands", "continent": "Europe"},
+        {"code": "MAD", "name": "Madrid, Spain", "continent": "Europe"},
+        {"code": "BCN", "name": "Barcelona, Spain", "continent": "Europe"},
+        {"code": "FCO", "name": "Rome, Italy", "continent": "Europe"},
+        {"code": "MXP", "name": "Milan, Italy", "continent": "Europe"},
+        {"code": "IST", "name": "Istanbul, Turkey", "continent": "Europe"},
+        {"code": "DME", "name": "Moscow, Russia", "continent": "Europe"},
+        {"code": "CPH", "name": "Copenhagen, Denmark", "continent": "Europe"},
+        {"code": "ARN", "name": "Stockholm, Sweden", "continent": "Europe"},
+        {"code": "OSL", "name": "Oslo, Norway", "continent": "Europe"},
+        {"code": "ZRH", "name": "Zurich, Switzerland", "continent": "Europe"},
+        {"code": "VIE", "name": "Vienna, Austria", "continent": "Europe"},
+        {"code": "LIS", "name": "Lisbon, Portugal", "continent": "Europe"},
+        {"code": "ATH", "name": "Athens, Greece", "continent": "Europe"},
+        
+        # Asia
+        {"code": "PEK", "name": "Beijing, China", "continent": "Asia"},
+        {"code": "PVG", "name": "Shanghai, China", "continent": "Asia"},
+        {"code": "HKG", "name": "Hong Kong", "continent": "Asia"},
+        {"code": "NRT", "name": "Tokyo, Japan", "continent": "Asia"},
+        {"code": "KIX", "name": "Osaka, Japan", "continent": "Asia"},
+        {"code": "ICN", "name": "Seoul, South Korea", "continent": "Asia"},
+        {"code": "SIN", "name": "Singapore", "continent": "Asia"},
+        {"code": "BKK", "name": "Bangkok, Thailand", "continent": "Asia"},
+        {"code": "KUL", "name": "Kuala Lumpur, Malaysia", "continent": "Asia"},
+        {"code": "DEL", "name": "Delhi, India", "continent": "Asia"},
+        {"code": "BOM", "name": "Mumbai, India", "continent": "Asia"},
+        {"code": "DXB", "name": "Dubai, UAE", "continent": "Asia"},
+        {"code": "DOH", "name": "Doha, Qatar", "continent": "Asia"},
+        
+        # Australia/Oceania
+        {"code": "SYD", "name": "Sydney, Australia", "continent": "Oceania"},
+        {"code": "MEL", "name": "Melbourne, Australia", "continent": "Oceania"},
+        {"code": "BNE", "name": "Brisbane, Australia", "continent": "Oceania"},
+        {"code": "PER", "name": "Perth, Australia", "continent": "Oceania"},
+        {"code": "AKL", "name": "Auckland, New Zealand", "continent": "Oceania"},
+        {"code": "CHC", "name": "Christchurch, New Zealand", "continent": "Oceania"},
+        {"code": "NAN", "name": "Nadi, Fiji", "continent": "Oceania"},
+        
+        # Africa
+        {"code": "JNB", "name": "Johannesburg, South Africa", "continent": "Africa"},
+        {"code": "CPT", "name": "Cape Town, South Africa", "continent": "Africa"},
+        {"code": "CAI", "name": "Cairo, Egypt", "continent": "Africa"},
+        {"code": "LOS", "name": "Lagos, Nigeria", "continent": "Africa"},
+        {"code": "ACC", "name": "Accra, Ghana", "continent": "Africa"},
+        {"code": "NBO", "name": "Nairobi, Kenya", "continent": "Africa"},
+        {"code": "ADD", "name": "Addis Ababa, Ethiopia", "continent": "Africa"},
+        {"code": "CMN", "name": "Casablanca, Morocco", "continent": "Africa"},
+        
+        # South America
+        {"code": "GRU", "name": "São Paulo, Brazil", "continent": "South America"},
+        {"code": "GIG", "name": "Rio de Janeiro, Brazil", "continent": "South America"},
+        {"code": "EZE", "name": "Buenos Aires, Argentina", "continent": "South America"},
+        {"code": "SCL", "name": "Santiago, Chile", "continent": "South America"},
+        {"code": "LIM", "name": "Lima, Peru", "continent": "South America"},
+        {"code": "BOG", "name": "Bogotá, Colombia", "continent": "South America"},
+        {"code": "CCS", "name": "Caracas, Venezuela", "continent": "South America"}
     ]
     return jsonify(common_airports)
 
@@ -534,10 +695,10 @@ if __name__ == '__main__':
                     
                     # Also print what the score would be
                     if app.preference_value[airport] < 0:
-                        score = 0.1 * (5 + app.preference_value[airport]) / 5  # Maps -5 to 0.0, -1 to 0.08
+                        score = 0.3 + (0.15 * (5 + app.preference_value[airport]) / 5)  # Maps -5 to 0.3, -1 to 0.42
                     elif app.preference_value[airport] > 0:
-                        boost = min(1.0, app.preference_value[airport] * 0.25)
-                        score = 0.5 + (boost * 0.5)  # Maps 1 to 0.625, 4 to 1.0
+                        boost = min(0.4, (app.preference_value[airport] * 0.15))
+                        score = 0.6 + boost  # Maps 1 to 0.75, 3+ to 1.0
                     else:
                         score = 0.5
                     print(f"This would give {airport} a preference score of {score:.2f}")

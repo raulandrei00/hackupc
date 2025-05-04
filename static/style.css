@@ -559,9 +559,14 @@ header .lead {
     transform: translateY(-50%);
     color: var(--skyscanner-blue);
     font-size: 18px;
+    pointer-events: none;
 }
 
 .input-with-icon input {
+    padding-left: 40px;
+}
+
+.input-with-icon select {
     padding-left: 40px;
 }
 
@@ -820,4 +825,34 @@ header .lead {
 :focus-visible {
     outline: 3px solid rgba(7, 112, 227, 0.5);
     outline-offset: 2px;
+}
+
+/* Destination continent sections */
+.continent-header {
+    font-weight: 600;
+    color: #2c3e50;
+    border-bottom: 1px solid #e9ecef;
+    padding-bottom: 5px;
+    margin-top: 15px;
+}
+
+.destination-filter-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    margin-bottom: 15px;
+}
+
+.destination-filter-buttons .btn {
+    transition: all 0.2s ease;
+}
+
+.destination-filter-buttons .btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
+.destination-filter-buttons .btn.active {
+    background-color: #0d6efd;
+    color: white;
 } 

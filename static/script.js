@@ -35,42 +35,123 @@ document.addEventListener('DOMContentLoaded', function() {
         preferenceWeightValue.textContent = parseFloat(this.value).toFixed(1);
     });
 
+    // Store airport data globally for continent filtering
+    let airportsData = [];
+
     // Load airport codes for dropdowns
     loadAirportCodes().then(airports => {
-        // Add popular destination checkboxes
-        const destinationsContainer = document.getElementById('destinationsContainer');
+        // Store the data globally
+        airportsData = airports;
         
-        // Create a row to hold destinations
-        const row = document.createElement('div');
-        row.className = 'row';
-        destinationsContainer.appendChild(row);
+        // Add destinations organized by continent
+        displayDestinationsByContinent(airports);
         
-        // Add each airport as a checkbox
-        airports.forEach(airport => {
-            const col = document.createElement('div');
-            col.className = 'col-md-4 mb-2';
-            
-            const checkboxDiv = document.createElement('div');
-            checkboxDiv.className = 'form-check';
-            
-            const checkbox = document.createElement('input');
-            checkbox.type = 'checkbox';
-            checkbox.className = 'form-check-input destination-checkbox';
-            checkbox.id = `dest-${airport.code}`;
-            checkbox.value = airport.code;
-            checkbox.checked = ['JFK', 'LAX', 'ORD', 'SFO', 'MIA'].includes(airport.code); // Default selected
-            
-            const label = document.createElement('label');
-            label.className = 'form-check-label';
-            label.htmlFor = `dest-${airport.code}`;
-            label.textContent = `${airport.code} - ${airport.name}`;
-            
-            checkboxDiv.appendChild(checkbox);
-            checkboxDiv.appendChild(label);
-            col.appendChild(checkboxDiv);
-            row.appendChild(col);
-        });
+        // Add event listeners for continent filter buttons
+        setupContinentFilterButtons();
     });
+
+    // Function to display destinations grouped by continent
+    function displayDestinationsByContinent(airports) {
+        const destinationsContainer = document.getElementById('destinationsContainer');
+        destinationsContainer.innerHTML = '<div class="form-text mb-2">Select potential destinations to consider</div>';
+        
+        // Group airports by continent
+        const continentGroups = {};
+        airports.forEach(airport => {
+            if (!continentGroups[airport.continent]) {
+                continentGroups[airport.continent] = [];
+            }
+            continentGroups[airport.continent].push(airport);
+        });
+        
+        // Create a section for each continent
+        Object.keys(continentGroups).sort().forEach(continent => {
+            // Create continent header
+            const continentHeader = document.createElement('h6');
+            continentHeader.className = 'continent-header mt-3 mb-2';
+            continentHeader.textContent = continent;
+            destinationsContainer.appendChild(continentHeader);
+            
+            // Create a row for the continent's airports
+            const row = document.createElement('div');
+            row.className = 'row';
+            row.dataset.continent = continent;
+            destinationsContainer.appendChild(row);
+            
+            // Add each airport as a checkbox within this continent
+            continentGroups[continent].forEach(airport => {
+                const col = document.createElement('div');
+                col.className = 'col-md-4 mb-2';
+                
+                const checkboxDiv = document.createElement('div');
+                checkboxDiv.className = 'form-check';
+                
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.className = 'form-check-input destination-checkbox';
+                checkbox.id = `dest-${airport.code}`;
+                checkbox.value = airport.code;
+                checkbox.dataset.continent = airport.continent;
+                
+                // Default select some major airports
+                const defaultSelected = ['JFK', 'LAX', 'ORD', 'SFO', 'MIA', 'LHR', 'CDG', 'NRT', 'SYD'];
+                checkbox.checked = defaultSelected.includes(airport.code);
+                
+                const label = document.createElement('label');
+                label.className = 'form-check-label';
+                label.htmlFor = `dest-${airport.code}`;
+                label.textContent = `${airport.code} - ${airport.name}`;
+                
+                checkboxDiv.appendChild(checkbox);
+                checkboxDiv.appendChild(label);
+                col.appendChild(checkboxDiv);
+                row.appendChild(col);
+            });
+        });
+    }
+    
+    // Setup the continent filter button functionality
+    function setupContinentFilterButtons() {
+        // Select All button
+        document.getElementById('selectAllDestinations').addEventListener('click', function() {
+            const checkboxes = document.querySelectorAll('.destination-checkbox');
+            checkboxes.forEach(checkbox => {
+                checkbox.checked = true;
+            });
+        });
+        
+        // Clear All button
+        document.getElementById('clearAllDestinations').addEventListener('click', function() {
+            const checkboxes = document.querySelectorAll('.destination-checkbox');
+            checkboxes.forEach(checkbox => {
+                checkbox.checked = false;
+            });
+        });
+        
+        // Continent filter buttons
+        const continentButtons = document.querySelectorAll('.destination-filter-buttons button[data-continent]');
+        continentButtons.forEach(button => {
+            button.addEventListener('click', function() {
+                const continent = this.dataset.continent;
+                
+                // First uncheck all destinations
+                document.querySelectorAll('.destination-checkbox').forEach(checkbox => {
+                    checkbox.checked = false;
+                });
+                
+                // Then check all destinations for the selected continent
+                document.querySelectorAll(`.destination-checkbox[data-continent="${continent}"]`).forEach(checkbox => {
+                    checkbox.checked = true;
+                });
+                
+                // Scroll to the continent section
+                const continentSection = document.querySelector(`.row[data-continent="${continent}"]`);
+                if (continentSection) {
+                    continentSection.scrollIntoView({ behavior: 'smooth' });
+                }
+            });
+        });
+    }
 
     // Add default travelers
     addTraveler('Alice', 'JFK');
@@ -433,6 +514,9 @@ function getCurrentPreferences() {
     const emissionsWeight = parseFloat(document.getElementById('emissionsWeight').value);
     const preferenceWeight = parseFloat(document.getElementById('preferenceWeight').value);
     
+    // Track if we need to reset preferences
+    let reset_preferences = false;
+    
     // Get traveler information with preferences
     const travelers = [];
     const travelerElements = document.querySelectorAll('.traveler-entry');
@@ -471,19 +555,34 @@ function getCurrentPreferences() {
         destinations.push(checkbox.value);
     });
     
+    // Check if any preferences were removed (detect by checking for empty preference entries)
+    travelerElements.forEach(travelerEl => {
+        const emptyPrefs = Array.from(travelerEl.querySelectorAll('.preference-entry')).filter(entry => {
+            const ratingStars = entry.querySelector('.rating-stars');
+            const rating = parseInt(ratingStars.dataset.rating || '0');
+            return rating === 0;
+        });
+        
+        if (emptyPrefs.length > 0) {
+            // If we find any empty/cleared preferences, indicate we should reset
+            reset_preferences = true;
+        }
+    });
+    
     return {
         travelDate: travelDate,
         costWeight: costWeight,
         emissionsWeight: emissionsWeight,
         preferenceWeight: preferenceWeight,
         travelers: travelers,
-        destinations: destinations
+        destinations: destinations,
+        reset_preferences: reset_preferences
     };
 }
 
 // Load airport codes from the API
 async function loadAirportCodes() {
-        const response = await fetch('/api/airport-codes');
+    const response = await fetch('/api/airport-codes');
     const airports = await response.json();
     return airports;
 }
@@ -775,6 +874,12 @@ async function addPreference(travelerEntry) {
     // Load airport codes for the destination dropdown
     const destSelect = preferenceEntry.querySelector('.preference-destination');
     
+    // Clear any existing options except the first one
+    while (destSelect.options.length > 1) {
+        destSelect.remove(1);
+    }
+    
+    // Add new airport options
     const airports = await loadAirportCodes();
     airports.forEach(airport => {
         const option = document.createElement('option');
