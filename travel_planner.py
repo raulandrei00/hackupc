@@ -532,6 +532,9 @@ def calculate_scores(
     # Store detailed score breakdowns
     score_breakdowns = {}
     
+    # Check if any destination has a very low preference score (potentially avoided)
+    has_avoided_destinations = any(score <= 0.05 for score in preference_scores.values())
+    
     # Calculate normalized scores - HIGHER is BETTER in this new system
     for destination in destinations:
         dest_code = destination.destination_code
@@ -554,17 +557,55 @@ def calculate_scores(
         raw_pref = preference_scores.get(dest_code, 0.5)
         
         # Normalize preference (0-1 scale, higher is better)
-        if max_pref > min_pref:
-            norm_preference = (raw_pref - min_pref) / (max_pref - min_pref)
+        # Special handling for avoided destinations
+        if raw_pref <= 0.05:
+            # This is an avoided destination - keep its low score
+            norm_preference = 0.0
+        elif max_pref > min_pref:
+            # Only normalize if there's an actual range to normalize
+            if has_avoided_destinations and min_pref < 0.1:
+                # If we have avoided destinations, normalize using 0.5 as the min value
+                # to prevent normalization from boosting avoided destinations
+                effective_min = 0.5
+                norm_preference = (raw_pref - effective_min) / (max_pref - effective_min)
+                # Clamp to range [0,1]
+                norm_preference = max(0.0, min(1.0, norm_preference))
+            else:
+                # Standard normalization
+                norm_preference = (raw_pref - min_pref) / (max_pref - min_pref)
         else:
-            norm_preference = 0.5  # Default if all preferences are equal
+            # If all scores are the same, use the raw score directly
+            norm_preference = raw_pref
         
-        # Calculate weighted sum (higher is better)
-        weighted_score = (
-            (cost_weight * norm_cost) +
-            (emissions_weight * norm_emissions) +
-            (preference_weight * norm_preference)
-        )
+        # For very important preferences, boost the weight
+        if preference_weight > 0.3 and (raw_pref >= 0.9 or raw_pref <= 0.1):
+            # For strong preferences (very high or very low), boost their impact
+            adjusted_preference_weight = min(1.0, preference_weight * 1.5)
+            # Adjust other weights proportionally
+            factor = (1.0 - adjusted_preference_weight) / (cost_weight + emissions_weight)
+            adjusted_cost_weight = cost_weight * factor
+            adjusted_emissions_weight = emissions_weight * factor
+            
+            # Calculate weighted sum (higher is better)
+            weighted_score = (
+                (adjusted_cost_weight * norm_cost) +
+                (adjusted_emissions_weight * norm_emissions) +
+                (adjusted_preference_weight * norm_preference)
+            )
+            
+            logger.info(f"Boosted preference weight for {dest_code} to {adjusted_preference_weight:.2f}")
+        else:
+            # Calculate weighted sum (higher is better)
+            weighted_score = (
+                (cost_weight * norm_cost) +
+                (emissions_weight * norm_emissions) +
+                (preference_weight * norm_preference)
+            )
+        
+        # Strongly penalize avoided destinations - ensure they rank at the bottom
+        if raw_pref <= 0.05:
+            weighted_score = weighted_score * 0.1  # Apply a strong penalty
+            logger.info(f"Applied strong penalty to avoided destination {dest_code}")
         
         # Store score in the destination object
         # Note: We've changed from "lower is better" to "higher is better"
@@ -576,6 +617,7 @@ def calculate_scores(
             "emissions_score": norm_emissions * 100,
             "preference_score": norm_preference * 100,
             "weighted_score": weighted_score * 100,
+            "raw_preference": raw_pref * 100,  # Add raw preference for debugging
             "components": {
                 "cost": {
                     "raw": destination.total_cost,
@@ -597,11 +639,11 @@ def calculate_scores(
         
         logger.info(f"Destination {destination.destination_code} scores - Cost: {norm_cost:.2f}, " +
                    f"Emissions: {norm_emissions:.2f}, Preference: {norm_preference:.2f}, " +
-                   f"Final Score: {destination.score:.2f}")
-    
-    # Add score breakdowns to the first destination (will be retrieved by the UI)
-    if destinations and score_breakdowns:
-        destinations[0].score_breakdowns = score_breakdowns
+                   f"Final score: {weighted_score:.2f}")
+        
+    # Assign score breakdowns to each destination
+    for destination in destinations:
+        destination.score_breakdowns = score_breakdowns.get(destination.destination_code, {})
     
     return destinations
 

@@ -280,8 +280,8 @@ Make sure to ONLY suggest destinations from the AVAILABLE DESTINATIONS list abov
             # Apply negative preference for destinations to avoid
             for code in destinations_to_avoid:
                 if code in app.preference_value:
-                    # Decrease preference value (but don't go below -5)
-                    app.preference_value[code] = max(-5, app.preference_value[code] - 2)
+                    # Increase penalty: decrease preference value more dramatically (but don't go below -10)
+                    app.preference_value[code] = max(-10, app.preference_value[code] - 5)
                     print(f"Decreased preference for avoided {code} to {app.preference_value[code]}")
                 else:
                     print(f"Warning: Destination {code} not found in preference tracking")
@@ -336,6 +336,11 @@ def find_destinations():
         emissions_weight = float(data.get('emissionsWeight', 0.2))
         preference_weight = float(data.get('preferenceWeight', 0.2))
         
+        # Initialize destinations_to_avoid (missing variable)
+        destinations_to_avoid = data.get('avoid_destinations', [])
+        # Convert from list of objects to set of codes for easier lookup
+        destinations_to_avoid = {d.get('code') for d in destinations_to_avoid if d.get('code')}
+        
         # Validate data
         if not travelers_data or not candidate_destinations or not travel_date:
             return jsonify({'error': 'Missing required data'}), 400
@@ -380,9 +385,15 @@ def find_destinations():
                 # Higher preference_value should result in HIGHER scores (better ranking)
                 # For negative preference values (destinations to avoid), give very low scores
                 if app.preference_value[dest] < 0:
-                    # Map negative preferences (-5 to -1) to very low scores (0.0 to 0.1)
+                    # Map negative preferences (-10 to -1) to very low scores (0.0 to 0.05)
                     # More negative = lower score
-                    score = 0.1 * (5 + app.preference_value[dest]) / 5  # Maps -5 to 0.0, -1 to 0.08
+                    # Make the penalty more severe for avoided destinations
+                    score = 0.05 * (10 + app.preference_value[dest]) / 10  # Maps -10 to 0.0, -1 to 0.045
+                    
+                    # For destinations explicitly marked to avoid in this session, make score even lower
+                    if dest in destinations_to_avoid:
+                        score = 0.0  # Force to absolute minimum
+                        print(f"Forcing avoided destination {dest} to minimum score 0.0")
                 elif app.preference_value[dest] > 0:
                     # Map positive preferences (1 to many) to high scores (0.5 to 1.0)
                     # Higher positive preference = higher score
