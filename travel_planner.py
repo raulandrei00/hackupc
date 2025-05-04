@@ -61,7 +61,7 @@ class DestinationScore:
     average_cost: float
     total_emissions: float
     flight_plans: List[TravelerFlightPlan] = field(default_factory=list)
-    score: float = float('inf')  # Lower is better
+    score: float = 0.0  # Higher is better
     score_breakdowns: Dict[str, Dict[str, float]] = field(default_factory=dict)
 
 
@@ -344,8 +344,8 @@ def find_optimal_destinations(
         valid_destinations, cost_weight, emissions_weight, preference_weight, general_preferences
     )
     
-    # Sort by score (lower is better)
-    return sorted(scored_destinations, key=lambda d: d.score)
+    # Sort by score (higher is better)
+    return sorted(scored_destinations, key=lambda d: d.score, reverse=True)
 
 
 def process_destination(
@@ -441,7 +441,9 @@ def calculate_scores(
     external_preference_store: Dict = None
 ) -> List[DestinationScore]:
     """
-    Calculate scores for destinations based on cost, emissions, traveler preferences, and general preferences.
+    Calculate scores for destinations based on cost, emissions, and preferences.
+    
+    Uses a normalized scoring system where HIGHER scores are BETTER.
     
     Args:
         destinations: List of DestinationScore objects
@@ -470,11 +472,10 @@ def calculate_scores(
     # Process general preferences by type
     for pref in general_preferences:
         pref_type = pref.get('type', '')
-        if pref_type == 'preferred_destination':
-            dest = pref.get('value', '').strip().upper()
-            rating = pref.get('rating', 3)
-            if dest:
-                general_destination_preferences[dest] = rating
+        if pref_type == 'destination':
+            # For the type 'destination', we expect a dict of preferences
+            if 'preferences' in pref:
+                general_destination_preferences = pref['preferences']
         elif pref_type == 'airline':
             general_airline_preferences.append(pref.get('value', '').strip())
         elif pref_type in ['departure_time', 'arrival_time']:
@@ -488,45 +489,16 @@ def calculate_scores(
     logger.info(f"General airline preferences: {general_airline_preferences}")
     logger.info(f"General time preferences: {general_time_preferences}")
     
-    # Check for external preference store
-    has_external_prefs = external_preference_store is not None and user_id is not None
+    # Ensure weights are normalized
+    total_weight = cost_weight + emissions_weight + preference_weight
     
-    # Get individual preferences from external store if available
-    individual_prefs = {}
-    group_prefs = {}
+    if total_weight > 0:
+        cost_weight = cost_weight / total_weight
+        emissions_weight = emissions_weight / total_weight
+        preference_weight = preference_weight / total_weight
     
-    if has_external_prefs:
-        # Get individual preferences for this user
-        if user_id in external_preference_store.get('individual', {}):
-            individual_prefs = external_preference_store['individual'][user_id]
-        
-        # Get group preferences
-        group_prefs = external_preference_store.get('group', {})
-            
-    # Set general preference weight to be twice the preference weight
-    general_preference_weight = preference_weight * 2
-    
-    # Add weight for individual and group preferences if external store is used
-    individual_preference_weight = preference_weight * 1.5
-    group_preference_weight = preference_weight * 1.0
-    
-    # Adjust weights to ensure they sum to 1
-    total_weight = cost_weight + emissions_weight + preference_weight + general_preference_weight
-    
-    if has_external_prefs:
-        total_weight += individual_preference_weight + group_preference_weight
-    
-    cost_weight = cost_weight / total_weight
-    emissions_weight = emissions_weight / total_weight
-    preference_weight = preference_weight / total_weight
-    general_preference_weight = general_preference_weight / total_weight
-    
-    if has_external_prefs:
-        individual_preference_weight = individual_preference_weight / total_weight
-        group_preference_weight = group_preference_weight / total_weight
-    
-    logger.info(f"Adjusted weights - Cost: {cost_weight:.2f}, Emissions: {emissions_weight:.2f}, " +
-               f"Preference: {preference_weight:.2f}, General Preference: {general_preference_weight:.2f}")
+    logger.info(f"Normalized weights - Cost: {cost_weight:.2f}, Emissions: {emissions_weight:.2f}, "
+               f"Preference: {preference_weight:.2f}")
     
     # Find max and min values for normalization
     max_cost = max(d.total_cost for d in destinations)
@@ -535,224 +507,103 @@ def calculate_scores(
     max_emissions = max(d.total_emissions for d in destinations)
     min_emissions = min(d.total_emissions for d in destinations)
     
-    # Destinations to exclude due to negative ratings
-    destinations_to_exclude = set()
+    # Get preference values
+    preference_scores = {}
+    for dest in destinations:
+        dest_code = dest.destination_code
+        
+        # Default preference value (neutral)
+        preference_scores[dest_code] = 0.5
+        
+        # Check if we have a general preference for this destination
+        if dest_code in general_destination_preferences:
+            # Get the general preference value (0-1 scale)
+            # Now HIGHER values are BETTER, so we use the value directly
+            preference_scores[dest_code] = general_destination_preferences[dest_code]
+    
+    # Find max and min preference scores
+    if preference_scores:
+        max_pref = max(preference_scores.values())
+        min_pref = min(preference_scores.values())
+    else:
+        max_pref = 1.0
+        min_pref = 0.0
     
     # Store detailed score breakdowns
     score_breakdowns = {}
     
-    # Calculate normalized scores
+    # Calculate normalized scores - HIGHER is BETTER in this new system
     for destination in destinations:
         dest_code = destination.destination_code
         
-        # Check if this destination should be excluded due to strongly negative preference
-        if has_external_prefs:
-            # Check individual preference for this destination - use string key
-            dest_pref_key = f"destination:{dest_code}"
-            if dest_pref_key in individual_prefs and individual_prefs[dest_pref_key] < 0:
-                # Exclude destinations with negative ratings
-                destinations_to_exclude.add(dest_code)
-                continue
-        
-        # Normalize cost (0-1 scale, lower is better)
+        # Normalize cost (0-1 scale, higher is better)
         if max_cost > min_cost:
-            norm_cost = (destination.total_cost - min_cost) / (max_cost - min_cost)
+            # Invert so cheaper flights score higher
+            norm_cost = 1.0 - ((destination.total_cost - min_cost) / (max_cost - min_cost))
         else:
-            norm_cost = 0
+            norm_cost = 1.0  # All costs are equal
         
-        # Normalize emissions (0-1 scale, lower is better)
+        # Normalize emissions (0-1 scale, higher is better)
         if max_emissions > min_emissions:
-            norm_emissions = (destination.total_emissions - min_emissions) / (max_emissions - min_emissions)
+            # Invert so lower emissions score higher
+            norm_emissions = 1.0 - ((destination.total_emissions - min_emissions) / (max_emissions - min_emissions))
         else:
-            norm_emissions = 0
+            norm_emissions = 1.0  # All emissions are equal
             
-        # Calculate preference score (higher preference is better)
-        preference_scores = []
-        for plan in destination.flight_plans:
-            traveler = plan.traveler
-            dest_code = destination.destination_code
-            
-            # If the traveler has a preference for this destination, use it
-            if dest_code in traveler.preferences:
-                # Convert preference from 1-5 scale to 0-1 scale 
-                # (higher preference value = lower score which is better)
-                preference = 1 - ((traveler.preferences[dest_code] - 1) / 4)
-                preference_scores.append(preference)
+        # Get preference score for this destination
+        raw_pref = preference_scores.get(dest_code, 0.5)
         
-        # If no preferences, use neutral score
-        # With preference, a high rating (5) should result in a low score (0)
-        # since lower scores are better
-        if preference_scores:
-            norm_preference = sum(preference_scores) / len(preference_scores)
+        # Normalize preference (0-1 scale, higher is better)
+        if max_pref > min_pref:
+            norm_preference = (raw_pref - min_pref) / (max_pref - min_pref)
         else:
-            # No preferences specified, use neutral value
-            norm_preference = 0.5
+            norm_preference = 0.5  # Default if all preferences are equal
         
-        # Calculate general preference score
-        general_pref_score = calculate_general_preference_score(
-            destination.destination_code,
-            destination.flight_plans,
-            general_destination_preferences,
-            general_airline_preferences,
-            general_time_preferences
+        # Calculate weighted sum (higher is better)
+        weighted_score = (
+            (cost_weight * norm_cost) +
+            (emissions_weight * norm_emissions) +
+            (preference_weight * norm_preference)
         )
         
-        # Initialize additional preference scores
-        individual_pref_score = 0.5  # Neutral by default
-        group_pref_score = 0.5       # Neutral by default
+        # Store score in the destination object
+        # Note: We've changed from "lower is better" to "higher is better"
+        destination.score = weighted_score
         
-        # Add individual and group preference scores if available
-        if has_external_prefs:
-            # Get individual preference for this destination - use string key
-            dest_pref_key = f"destination:{dest_code}"
-            if dest_pref_key in individual_prefs:
-                # Convert from -5 to +5 scale to 0-1 scale (lower is better)
-                rating = individual_prefs[dest_pref_key]
-                if rating > 0:
-                    # Positive ratings: higher rating = lower score = better
-                    individual_pref_score = 1 - (rating / 5)
-                else:
-                    # Negative ratings: lower rating = higher score = worse
-                    individual_pref_score = 0.5 + abs(rating) / 10  # Max 1.0 for -5 rating
-            
-            # Get group preference for this destination - use string key
-            if dest_pref_key in group_prefs:
-                # Convert from -5 to +5 scale to 0-1 scale (lower is better)
-                rating = group_prefs[dest_pref_key]
-                if rating > 0:
-                    # Positive ratings: higher rating = lower score = better
-                    group_pref_score = 1 - (rating / 5)
-                else:
-                    # Negative ratings: lower rating = higher score = worse
-                    group_pref_score = 0.5 + abs(rating) / 10  # Max 1.0 for -5 rating
-        
-        # Calculate weighted score (lower is better)
-        weighted_score_components = [
-            (cost_weight * norm_cost),
-            (emissions_weight * norm_emissions),
-            (preference_weight * norm_preference),
-            (general_preference_weight * general_pref_score)
-        ]
-        
-        if has_external_prefs:
-            weighted_score_components.extend([
-                (individual_preference_weight * individual_pref_score),
-                (group_preference_weight * group_pref_score)
-            ])
-        
-        weighted_score = sum(weighted_score_components)
-        
-        # Ensure score is between 0 and 1
-        destination.score = max(0, min(1, weighted_score))
-        
-        # Convert 0-1 scale (where lower is better) to 0-100 scale (where higher is better)
-        # for more intuitive display in the UI
-        ui_base_score = (1 - ((norm_cost * 0.6) + (norm_emissions * 0.4))) * 100
-        ui_group_pref_score = ((1 - group_pref_score) * 10) - 5 if has_external_prefs else 0
-        ui_individual_pref_score = ((1 - individual_pref_score) * 10) - 5 if has_external_prefs else 0
-        ui_combined_score = (1 - destination.score) * 100
-        
-        # Store score breakdowns for UI display
+        # Store scores for UI display
         score_breakdowns[dest_code] = {
-            "base_score": ui_base_score,
-            "group_preference": ui_group_pref_score,
-            "individual_preference": ui_individual_pref_score,
-            "combined_score": ui_combined_score
+            "cost_score": norm_cost * 100,
+            "emissions_score": norm_emissions * 100,
+            "preference_score": norm_preference * 100,
+            "weighted_score": weighted_score * 100,
+            "components": {
+                "cost": {
+                    "raw": destination.total_cost,
+                    "normalized": norm_cost,
+                    "weighted": cost_weight * norm_cost
+                },
+                "emissions": {
+                    "raw": destination.total_emissions,
+                    "normalized": norm_emissions,
+                    "weighted": emissions_weight * norm_emissions
+                },
+                "preference": {
+                    "raw": raw_pref,
+                    "normalized": norm_preference,
+                    "weighted": preference_weight * norm_preference
+                }
+            }
         }
         
         logger.info(f"Destination {destination.destination_code} scores - Cost: {norm_cost:.2f}, " +
                    f"Emissions: {norm_emissions:.2f}, Preference: {norm_preference:.2f}, " +
-                   f"General Pref: {general_pref_score:.2f}, Final Score: {destination.score:.2f}")
-    
-    # Filter out destinations with negative preferences
-    filtered_destinations = [d for d in destinations if d.destination_code not in destinations_to_exclude]
+                   f"Final Score: {destination.score:.2f}")
     
     # Add score breakdowns to the first destination (will be retrieved by the UI)
-    if filtered_destinations and score_breakdowns:
-        filtered_destinations[0].score_breakdowns = score_breakdowns
+    if destinations and score_breakdowns:
+        destinations[0].score_breakdowns = score_breakdowns
     
-    return filtered_destinations
-
-
-def calculate_general_preference_score(
-    destination_code: str,
-    flight_plans: List[TravelerFlightPlan],
-    general_destination_preferences: Dict[str, float],
-    general_airline_preferences: List[str],
-    general_time_preferences: List[Dict]
-) -> float:
-    """
-    Calculate a score based on how well the destination and flights match general preferences.
-    
-    Args:
-        destination_code: IATA code of the destination
-        flight_plans: List of TravelerFlightPlan objects
-        general_destination_preferences: Dictionary of destination preferences
-        general_airline_preferences: List of preferred airlines
-        general_time_preferences: List of time preference dictionaries
-    
-    Returns:
-        Score between 0 and 1 (lower is better)
-    """
-    scores = []
-    
-    # 1. Destination preference score
-    if destination_code in general_destination_preferences:
-        # Get rating (1-5 scale, with negative values for disliked destinations)
-        rating = general_destination_preferences[destination_code]
-        if rating < 0:
-            # Strongly penalize negative ratings (disliked destinations)
-            scores.append(1.0)  # Worst score
-        else:
-            # For positive ratings, convert to 0-1 scale (higher rating = lower score = better)
-            scores.append(1 - ((rating - 1) / 4))
-    
-    # 2. Airline preference score
-    if general_airline_preferences:
-        airline_matches = 0
-        for plan in flight_plans:
-            if any(airline.lower() in plan.flight.airline.lower() for airline in general_airline_preferences):
-                airline_matches += 1
-        
-        # Calculate percentage of flights matching preferred airlines
-        airline_score = 1.0 - (airline_matches / len(flight_plans))
-        scores.append(airline_score)
-    
-    # 3. Time preference score
-    if general_time_preferences:
-        time_matches = 0
-        for plan in flight_plans:
-            flight = plan.flight
-            for time_pref in general_time_preferences:
-                pref_type = time_pref.get('type')
-                pref_value = time_pref.get('value', '').lower()
-                
-                if pref_type == 'departure_time':
-                    departure_hour = flight.departure_time.hour
-                    if ('morning' in pref_value and 5 <= departure_hour < 12) or \
-                       ('afternoon' in pref_value and 12 <= departure_hour < 17) or \
-                       ('evening' in pref_value and 17 <= departure_hour < 21) or \
-                       ('night' in pref_value and (21 <= departure_hour or departure_hour < 5)):
-                        time_matches += 1
-                        
-                elif pref_type == 'arrival_time':
-                    arrival_hour = flight.arrival_time.hour
-                    if ('morning' in pref_value and 5 <= arrival_hour < 12) or \
-                       ('afternoon' in pref_value and 12 <= arrival_hour < 17) or \
-                       ('evening' in pref_value and 17 <= arrival_hour < 21) or \
-                       ('night' in pref_value and (21 <= arrival_hour or arrival_hour < 5)):
-                        time_matches += 1
-        
-        if len(flight_plans) * len(general_time_preferences) > 0:
-            time_score = 1.0 - (time_matches / (len(flight_plans) * len(general_time_preferences)))
-            scores.append(time_score)
-    
-    # If we have no score components, use a neutral score
-    if not scores:
-        return 0.5
-    
-    # Average all score components
-    return sum(scores) / len(scores)
+    return destinations
 
 
 def format_currency(amount: float) -> str:
@@ -789,7 +640,7 @@ def print_destinations(destinations: List[DestinationScore], top_n: int = 5):
         print(f"   Total Cost: {format_currency(destination.total_cost)}")
         print(f"   Average Cost Per Person: {format_currency(destination.average_cost)}")
         print(f"   Total CO₂ Emissions: {destination.total_emissions:.1f} kg")
-        print(f"   Score (lower is better): {destination.score:.3f}")
+        print(f"   Score (higher is better): {destination.score:.3f}")
         print("\n   FLIGHT DETAILS:")
         
         for flight_plan in destination.flight_plans:

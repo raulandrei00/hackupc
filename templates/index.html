@@ -3,70 +3,24 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Travel Reunion Planner</title>
-    <link rel="stylesheet" type="text/css" href="style.css">
+    <title>Travel Planner</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-    <style>
-        .chat-box {
-            height: 300px;
-            overflow-y: auto;
-            border: 1px solid #ddd;
-            border-radius: 8px;
-            padding: 15px;
-            margin-bottom: 15px;
-            background: #f9f9f9;
-        }
-        
-        .message {
-            margin-bottom: 10px;
-            padding: 8px 12px;
-            border-radius: 8px;
-            max-width: 80%;
-            word-wrap: break-word;
-        }
-        
-        .user-message {
-            background: #e3f2fd;
-            margin-left: auto;
-            text-align: right;
-        }
-        
-        .bot-message {
-            background: #f1f1f1;
-            margin-right: auto;
-        }
-        
-        .chat-input {
-            display: flex;
-            gap: 10px;
-        }
-        
-        .chat-input input {
-            flex: 1;
-        }
-        
-        #aiSuggestions {
-            border-top: 1px solid #ddd;
-            padding-top: 15px;
-            margin-top: 15px;
-        }
-    </style>
 </head>
 <body>
     <div class="container">
         <header class="text-center my-4">
-            <h1>Travel Reunion Planner</h1>
-            <p class="lead">Find the perfect destination for your group to meet</p>
+            <h1>Travel Planner</h1>
+            <p class="lead">Find the perfect destination for your trip</p>
         </header>
 
         <div class="row">
             <div class="col-md-5">
                 <div class="card mb-4">
                     <div class="card-header">
-                        <h3>Plan Your Reunion</h3>
+                        <h3>Plan Your Trip</h3>
                     </div>
                     <div class="card-body">
                         <form id="plannerForm">
@@ -99,26 +53,6 @@
                                             <span id="preferenceWeightValue">0.2</span>
                                         </div>
                                     </div>
-                                </div>
-                            </div>
-                            
-                            <!-- General Preferences Section -->
-                            <div class="mb-3">
-                                <label class="form-label">General Preferences <span class="badge bg-primary">High Priority</span></label>
-                                <div id="generalPreferencesContainer" class="border rounded p-3">
-                                    <div class="form-text mb-2">
-                                        Add general preferences that apply to everyone. These preferences have <strong>special weight</strong> in determining the best destinations and flights. The system will prioritize:
-                                        <ul class="small mt-1">
-                                            <li><strong>Preferred destinations</strong> with positive ratings</li>
-                                            <li>Flights with your <strong>preferred airlines</strong></li> 
-                                            <li>Flights that match your <strong>preferred departure/arrival times</strong></li>
-                                            <li>Destinations with <strong>negative ratings</strong> will be strongly avoided</li>
-                                        </ul>
-                                    </div>
-                                    <div id="generalPreferencesList"></div>
-                                    <button type="button" id="addGeneralPrefBtn" class="btn btn-sm btn-outline-secondary mt-2">
-                                        <i class="bi bi-plus"></i> Add General Preference
-                                    </button>
                                 </div>
                             </div>
 
@@ -171,19 +105,13 @@
                     </div>
                     <div class="card-body">
                         <div class="chat-box" id="chatMessages">
-                            <div class="message bot-message">
-                                Hello! I'm your travel planning assistant. I can help with destination ideas, travel tips, and more. How can I assist you today?
-                            </div>
+                            <!-- Chat messages will appear here -->
                         </div>
                         <div class="chat-input">
                             <input type="text" class="form-control" id="chatInput" placeholder="Ask me anything about your trip...">
                             <button class="btn btn-primary" id="sendChatBtn">
                                 <i class="bi bi-send"></i>
                             </button>
-                        </div>
-                        <div id="aiSuggestions" class="d-none">
-                            <h5>AI Suggestions</h5>
-                            <div id="suggestionsContent"></div>
                         </div>
                     </div>
                 </div>
@@ -313,29 +241,6 @@
                         <div class="flight-emissions text-muted mt-2 small"></div>
                     </div>
                 </div>
-            </div>
-        </div>
-    </template>
-    
-    <!-- General Preference template -->
-    <template id="generalPreferenceTemplate">
-        <div class="general-preference-item mb-2">
-            <div class="input-group">
-                <div class="input-group-text">
-                    <select class="form-select form-select-sm preference-type" style="width: 120px; min-width: 120px;">
-                        <option value="airline">Airline</option>
-                        <option value="max_price">Max Price</option>
-                        <option value="departure_time">Departure Time</option>
-                        <option value="arrival_time">Arrival Time</option>
-                        <option value="layovers">Max Layovers</option>
-                        <option value="travel_class">Travel Class</option>
-                        <option value="preferred_destination">Preferred Destination</option>
-                    </select>
-                </div>
-                <input type="text" class="form-control preference-value" placeholder="Preference value">
-                <button class="btn btn-outline-danger remove-general-pref" type="button">
-                    <i class="bi bi-x"></i>
-                </button>
             </div>
         </div>
     </template>
