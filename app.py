@@ -126,20 +126,25 @@ AVAILABLE DESTINATIONS:
 
 {preferences_text}
 
-Provide helpful but concise travel advice based on the user's question and preferences. Be direct and to the point.
+You are a travel recommendation assistant. Given a user's travel preferences (likes and dislikes), produce two clearly labeled sections:
 
-For your response, include these two clear sections with the exact headings:
+SUGGESTED DESTINATIONS:
+* [Airport code] – [One-line justification tied directly to an explicit user preference or statement]
+* [Airport code] – [Another one-line, evidence-based justification]
 
-1. "SUGGESTED DESTINATIONS:" - List 2-3 destinations from the available destinations that would be good based on the user's preferences, with brief reasons
+DESTINATIONS TO AVOID:
+* [Airport code] – [One-line justification tied directly to an explicit user dislike or negative statement]
+* [Airport code] – [Another one-line, evidence-based justification]
 
-2. "DESTINATIONS TO AVOID:" - List 1-2 destinations that would be poor choices based on the user's preferences, with brief reasons
+Each justification must explicitly reference the user's own words or clear synonyms. For example, if the user said "I love beaches", you might write "* Miami (MIA): User explicitly said they love beaches". If the user said "I dislike cold weather", you might write "* New York (JFK): New York has cold winters and user dislikes cold weather".
 
-Format each destination with its airport code in parentheses, for example: "New York (JFK)".
-Make sure to ONLY suggest destinations from the AVAILABLE DESTINATIONS list above.
+Do not include destinations based on general vibes or contrasts. Only suggest or avoid destinations based on explicitly stated preferences.
 
-IMPORTANT: For both sections, format each destination on a new line with a bullet point (*) and include the airport code in parentheses, for example:
-* New York (JFK): Reason for suggestion/avoidance
-* Chicago (ORD): Reason for suggestion/avoidance"""
+Format each destination with its airport code in parentheses, for example: "* New York (JFK): Reason for suggestion/avoidance"
+
+VERY IMPORTANT: Always include both sections even if one section has no destinations. In that case, write "None based on current preferences" under that section.
+
+Make sure to ONLY suggest destinations from the AVAILABLE DESTINATIONS list above."""
 
         try:
             # List available models for debugging
@@ -193,16 +198,16 @@ IMPORTANT: For both sections, format each destination on a new line with a bulle
         destinations_to_avoid = {}
         
         # Extract suggested destinations section
-        suggested_match = re.search(r'SUGGESTED DESTINATIONS:(.*?)(?:DESTINATIONS TO AVOID:|$)', 
-                                    assistant_message, re.IGNORECASE | re.DOTALL)
+        suggested_match = re.search(r'SUGGESTED DESTINATIONS:(.*?)(?:(?:\d+\.\s*)?DESTINATIONS TO AVOID:|$)', 
+                                  assistant_message, re.IGNORECASE | re.DOTALL)
         
         # Extract destinations to avoid section - improve the regex to be more robust
-        avoid_match = re.search(r'DESTINATIONS TO AVOID:(.*?)(?:\n\n|\Z)', 
-                                assistant_message, re.IGNORECASE | re.DOTALL)
+        avoid_match = re.search(r'(?:\d+\.\s*)?DESTINATIONS? TO AVOID:?\s*([\s\S]*?)(?:\n\n|\Z)', 
+                                  assistant_message, re.IGNORECASE | re.DOTALL)
         
         # Try alternate pattern if first one doesn't match
         if not avoid_match:
-            avoid_match = re.search(r'DESTINATIONS? TO AVOID:?\s*([\s\S]*?)(?:\n\n|\Z)',
+            avoid_match = re.search(r'(?:\d+\.\s*)?DESTINATIONS? TO AVOID:?\s*([\s\S]*?)(?:\n\n|\Z)',
                                    assistant_message, re.IGNORECASE)
             if avoid_match:
                 print("Found avoid section with alternate pattern")
@@ -226,7 +231,20 @@ IMPORTANT: For both sections, format each destination on a new line with a bulle
                 }
                 print(f"Found destination: {dest_name} ({airport_code})")
             
-            # Try alternate formats if none found
+            # Try alternate formats if none found - look for bullet points or numbered lists
+            if not destinations:
+                # Look for bullet points with airport codes
+                bullet_matches = re.finditer(r'[\*\-•]\s*([A-Za-z\s,\.]+)\s*\(([A-Z]{3})\)', text)
+                for match in bullet_matches:
+                    dest_name = match.group(1).strip()
+                    airport_code = match.group(2).strip()
+                    destinations[airport_code] = {
+                        "name": dest_name,
+                        "code": airport_code
+                    }
+                    print(f"Found bulleted destination: {dest_name} ({airport_code})")
+            
+            # If still no destinations found, try looking for just airport codes
             if not destinations:
                 # Try looking for just the airport codes if they're mentioned
                 alt_matches = re.finditer(r'\b([A-Z]{3})\b', text)
@@ -268,7 +286,17 @@ IMPORTANT: For both sections, format each destination on a new line with a bulle
                 else:
                     print(f"Warning: Destination {code} not found in preference tracking")
         else:
+            # Add more detailed logging for debugging
             print("No DESTINATIONS TO AVOID section found in the response")
+            print(f"Full assistant response: '{assistant_message}'")
+            # Print the first 100 characters of the message for easier debugging
+            print(f"First 100 chars: '{assistant_message[:100]}'")
+            print(f"Last 100 chars: '{assistant_message[-100:]}'")
+            
+            # Check if there's anything resembling a to-avoid section
+            possible_avoid = re.search(r'avoid|negative|don\'t recommend', assistant_message, re.IGNORECASE)
+            if possible_avoid:
+                print(f"Found possible avoid-related content near: '{assistant_message[max(0, possible_avoid.start()-20):min(len(assistant_message), possible_avoid.start()+50)]}'")
         
         print(f"Returning: {len(suggested_destinations)} recommended destinations, {len(destinations_to_avoid)} destinations to avoid")
         

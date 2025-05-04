@@ -281,27 +281,47 @@ function initializeChat() {
         const suggestionType = type === 'suggested' ? 'Suggested Destinations' : 'Destinations to Avoid';
         const suggestionClass = type === 'suggested' ? 'suggestion-positive' : 'suggestion-negative';
         
+        console.log(`Displaying ${destinations.length} ${suggestionType}`);
+        
         // Create a container for the suggestions
         const suggestionDiv = document.createElement('div');
         suggestionDiv.className = `destination-suggestions ${suggestionClass}`;
+        suggestionDiv.style.margin = '8px 0';
+        suggestionDiv.style.padding = '8px 12px';
+        suggestionDiv.style.borderRadius = '5px';
+        suggestionDiv.style.backgroundColor = type === 'suggested' ? '#e6f7ff' : '#fff1f0';
+        suggestionDiv.style.borderLeft = type === 'suggested' ? '4px solid #1890ff' : '4px solid #ff4d4f';
         
-        // Add a heading
+        // Add a heading with strong emphasis
         const heading = document.createElement('h6');
         heading.className = 'suggestion-heading';
+        heading.style.fontWeight = 'bold';
+        heading.style.marginBottom = '8px';
+        heading.style.color = type === 'suggested' ? '#0050b3' : '#a8071a';
         heading.textContent = suggestionType;
         suggestionDiv.appendChild(heading);
         
         // Create a list for the destinations
         const list = document.createElement('ul');
         list.className = 'suggestion-list';
+        list.style.listStyleType = 'none';
+        list.style.padding = '0';
+        list.style.margin = '0';
         
         // Add each destination to the list
         destinations.forEach(dest => {
             const item = document.createElement('li');
+            item.style.marginBottom = '4px';
             
             // Create the destination tag with appropriate color
             const destTag = document.createElement('span');
             destTag.className = type === 'suggested' ? 'destination-tag' : 'destination-tag avoid-tag';
+            destTag.style.display = 'inline-block';
+            destTag.style.padding = '4px 8px';
+            destTag.style.borderRadius = '4px';
+            destTag.style.backgroundColor = type === 'suggested' ? '#e6f7ff' : '#fff1f0';
+            destTag.style.border = type === 'suggested' ? '1px solid #91caff' : '1px solid #ffccc7';
+            destTag.style.cursor = 'pointer';
             destTag.textContent = `${dest.name} (${dest.code})`;
             
             // Add click functionality to select the destination in the search form
